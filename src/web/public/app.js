@@ -379,8 +379,8 @@ function surveyForm() {
     <h3 class="u-m0">Khảo sát giá</h3>
     <div class="muted small">${CH.meta?.provider === "vna" ? "Lấy giá thấp nhất từng ngày của Vietnam Airlines (1 người lớn, 1 chiều, đã gồm thuế phí) – mỗi request 62 ngày, nên khảo sát cả năm chỉ vài request. Khứ hồi = khảo sát cả 2 chiều." : "Tìm giá 1 người lớn cho cả dải ngày để vẽ biểu đồ theo ngày và theo tháng. Mỗi ngày = 1 lượt tìm (Duffel miễn phí 1500 lượt/tháng nếu chưa có đơn)."}</div>
     <div class="grid2">
-      <label>Điểm đi<input name="origin" maxlength="3" value="${esc(r?.origin || "")}" placeholder="HAN" required /></label>
-      <label>Điểm đến<input name="destination" maxlength="3" value="${esc(r?.destination || "")}" placeholder="SGN" required /></label>
+      <label>Điểm đi${airportInput("origin", r?.origin || "", "HAN hoặc Hà Nội")}</label>
+      <label>Điểm đến${airportInput("destination", r?.destination || "", "SGN hoặc Sài Gòn")}</label>
       <label>Từ ngày<input name="from" type="date" value="${d0}" required /></label>
       <label>Đến ngày<input name="to" type="date" value="${d1}" required /></label>
       <label>Lấy mẫu<select name="stepDays"><option value="1">Mỗi ngày</option><option value="2">Cách 2 ngày</option><option value="3" selected>Cách 3 ngày</option><option value="7">Mỗi tuần</option></select></label>
@@ -418,6 +418,49 @@ async function pollSurvey() {
     }
   }
 }
+
+
+// ================= Ô chọn sân bay (gợi ý tự động) =================
+const AP = { cache: new Map(), timer: null };
+function airportInput(name, value, placeholder) {
+  return `<input name="${name}" value="${esc(value)}" placeholder="${esc(placeholder)}" list="dl-${name}" autocomplete="off" data-airport required /><datalist id="dl-${name}"></datalist><span class="small muted" data-ap-label="${name}"></span>`;
+}
+async function airportSearch(q) {
+  const k = q.trim().toLowerCase();
+  if (AP.cache.has(k)) return AP.cache.get(k);
+  const r = await api("GET", "/api/airports?limit=8&q=" + encodeURIComponent(q));
+  AP.cache.set(k, r);
+  return r;
+}
+async function onAirportInput(el) {
+  clearTimeout(AP.timer);
+  AP.timer = setTimeout(async () => {
+    const list = await airportSearch(el.value).catch(() => []);
+    const dl = document.getElementById("dl-" + el.name);
+    if (dl) dl.innerHTML = list.map((a) => `<option value="${a.code}">${esc(a.city)} – ${esc(a.name)}</option>`).join("");
+    showAirportLabel(el, list);
+  }, 200);
+}
+function showAirportLabel(el, list) {
+  const lab = document.querySelector(`[data-ap-label="${el.name}"]`);
+  if (!lab) return;
+  const code = el.value.trim().toUpperCase();
+  const a = list.find((x) => x.code === code);
+  lab.textContent = a ? `${a.city} – ${a.name}` : "";
+}
+/** Khi rời ô: nếu gõ tên (vd "da nang") thì tự đổi thành mã IATA khớp nhất */
+async function resolveAirport(el) {
+  const v = el.value.trim();
+  if (!v) return;
+  const list = await airportSearch(v).catch(() => []);
+  if (!/^[A-Za-z]{3}$/.test(v) || !list.some((a) => a.code === v.toUpperCase())) {
+    if (list[0]) el.value = list[0].code;
+  } else el.value = v.toUpperCase();
+  showAirportLabel(el, list);
+}
+document.addEventListener("input", (e) => { if (e.target.matches?.("[data-airport]")) onAirportInput(e.target); });
+document.addEventListener("focusout", (e) => { if (e.target.matches?.("[data-airport]")) resolveAirport(e.target); });
+document.addEventListener("focusin", (e) => { if (e.target.matches?.("[data-airport]")) onAirportInput(e.target); });
 
 // ================= Chuyến bay =================
 async function loadCfg() {
@@ -480,8 +523,8 @@ function openHuntEditor(idx) {
     <div class="grid2">
       <label>Mã chuyến (id)<input name="id" value="${esc(h.id)}" placeholder="han-sgn-tet" pattern="[A-Za-z0-9_\\-]+" required /></label>
       <label class="u-end check"><input type="checkbox" name="enabled" ${h.enabled ? "checked" : ""} /> Đang bật</label>
-      <label>Điểm đi (IATA)<input name="origin" value="${esc(h.origin)}" placeholder="HAN" maxlength="3" required /></label>
-      <label>Điểm đến (IATA)<input name="destination" value="${esc(h.destination)}" placeholder="SGN" maxlength="3" required /></label>
+      <label>Điểm đi (mã hoặc tên thành phố)${airportInput("origin", h.origin, "HAN hoặc Hà Nội")}</label>
+      <label>Điểm đến (mã hoặc tên thành phố)${airportInput("destination", h.destination, "SGN hoặc Sài Gòn")}</label>
       <label>Ngày đi từ<input name="departFrom" type="date" value="${esc(h.departDates.from)}" required /></label>
       <label>Ngày đi đến<input name="departTo" type="date" value="${esc(h.departDates.to)}" required /></label>
     </div>
@@ -769,8 +812,9 @@ document.addEventListener("change", (e) => {
   const el = e.target.closest("input[data-action]");
   if (el) actions[el.dataset.action]?.(el, e);
 });
-document.addEventListener("submit", (e) => {
+document.addEventListener("submit", async (e) => {
   e.preventDefault();
+  await Promise.all($$("[data-airport]", e.target).map(resolveAirport));
   forms[e.target.dataset.form]?.(e.target);
 });
 

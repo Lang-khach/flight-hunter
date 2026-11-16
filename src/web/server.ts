@@ -12,6 +12,7 @@ import { getSettings, maskSecret, saveSettings, telegramCreds } from "../setting
 import type { Storage } from "../storage.js";
 import { FREE_RATIO, freeSearchesLeft, getUsage } from "../usage.js";
 import { aggregate, listRoutes } from "../prices.js";
+import { airportByCode, searchAirports } from "../airports.js";
 import { MAX_SURVEY_SEARCHES, survey, surveyCost, type SurveyRequest } from "../survey.js";
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "public");
@@ -196,6 +197,20 @@ export function startServer(opts: { port: number; host: string; store: Storage; 
     });
     console.log(`[web] ${req.user} đã thanh toán ${req.params.id} (PNR ${paid.bookingReference})`);
     send(res, 200, paid);
+  });
+
+  // ---------------- Sân bay ----------------
+  /** GET /api/airports?q=da nang&domestic=1&limit=10  – tìm theo mã, thành phố, tên (không dấu được) */
+  route("GET", "/api/airports", (req, res) => {
+    const sp = new URL(req.url ?? "", "http://x").searchParams;
+    const q = (sp.get("q") ?? "").slice(0, 60);
+    send(res, 200, searchAirports(q, { domesticOnly: sp.get("domestic") === "1", limit: Number(sp.get("limit")) || 10 }));
+  });
+
+  route("GET", "/api/airports/:code", (req, res) => {
+    const a = airportByCode(req.params.code);
+    if (!a) throw new ActionError("Không tìm thấy sân bay", 404);
+    send(res, 200, a);
   });
 
   // ---------------- Biểu đồ giá ----------------
