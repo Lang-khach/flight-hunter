@@ -29,6 +29,8 @@ export const HuntSchema = z
     destination: z.string().length(3).toUpperCase(),
     departDates: dateRange,
     returnDates: dateRange.optional(),
+    /** Khứ hồi: số ngày ở lại (ngày về - ngày đi) chấp nhận được */
+    stay: z.object({ min: z.number().int().min(0).max(60), max: z.number().int().min(0).max(90) }).refine((x) => x.min <= x.max, "Ở lại: từ phải ≤ đến").optional(),
     cabinClass: z.enum(["economy", "premium_economy", "business", "first"]).default("economy"),
     maxStops: z.number().int().min(0).default(1),
     airlines: z.array(z.string().length(2).toUpperCase()).optional(),
@@ -52,7 +54,44 @@ export const HuntSchema = z
       ctx.addIssue({ code: "custom", message: `[${h.id}] Số em bé không được nhiều hơn số người lớn` });
   });
 
+/** Mẫu chuyến trong thư viện: bấm để tạo chuyến săn nhanh */
+export const TemplateSchema = z.object({
+  id: z.string().regex(/^[a-z0-9-_]+$/i),
+  name: z.string().min(1).max(60),
+  origin: z.string().length(3).toUpperCase(),
+  destination: z.string().length(3).toUpperCase(),
+  roundTrip: z.boolean().default(false),
+  stayDays: z.number().int().min(1).max(30).default(4),
+  month: z.number().int().min(1).max(12).optional(),
+  adults: z.number().int().min(1).max(9).default(1),
+  children: z.number().int().min(0).max(8).default(0),
+  infants: z.number().int().min(0).max(4).default(0),
+  maxPrice: z.number().positive().optional(),
+});
+export type Template = z.infer<typeof TemplateSchema>;
+
+const t = (origin: string, destination: string, name: string, roundTrip = false, month?: number): Template =>
+  ({ id: `${origin}-${destination}${roundTrip ? "-rt" : ""}`.toLowerCase(), name, origin, destination, roundTrip, stayDays: 4, month, adults: 1, children: 0, infants: 0 });
+
+export const DEFAULT_TEMPLATES: Template[] = [
+  t("HAN", "CXR", "Hà Nội → Nha Trang", false, 5),
+  t("HAN", "CXR", "Hà Nội ⇄ Nha Trang", true, 5),
+  t("HAN", "SGN", "Hà Nội → TP.HCM"),
+  t("SGN", "HAN", "TP.HCM → Hà Nội"),
+  t("HAN", "DAD", "Hà Nội ⇄ Đà Nẵng", true),
+  t("HAN", "PQC", "Hà Nội ⇄ Phú Quốc", true),
+  t("HAN", "DLI", "Hà Nội ⇄ Đà Lạt", true),
+  t("HAN", "UIH", "Hà Nội ⇄ Quy Nhơn", true),
+  t("SGN", "DAD", "TP.HCM ⇄ Đà Nẵng", true),
+  t("SGN", "PQC", "TP.HCM ⇄ Phú Quốc", true),
+  t("SGN", "HPH", "TP.HCM ⇄ Hải Phòng", true),
+  t("SGN", "HUI", "TP.HCM ⇄ Huế", true),
+];
+
 export const ConfigSchema = z.object({
+  templates: z.array(TemplateSchema).default(DEFAULT_TEMPLATES),
+  /** đã tạo chuyến mặc định (Hà Nội → Nha Trang tháng 5) chưa */
+  seededDefaultHunt: z.boolean().default(false),
   provider: z.enum(["mock", "duffel", "vna"]).default("vna"),
   /** Ước tính giá cả đoàn từ giá 1 người lớn của VNA (nguồn vna chỉ có giá người lớn) */
   vnaChildFactor: z.number().min(0).max(1.5).default(1),

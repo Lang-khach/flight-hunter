@@ -25,13 +25,20 @@ function eachDay(from: string, to: string): string[] {
 
 const today = () => new Date().toISOString().slice(0, 10);
 
+/** Số ngày ở lại có nằm trong khoảng người dùng chấp nhận không */
+export function stayOk(hunt: Hunt, depart: string, ret: string) {
+  if (!hunt.stay) return true;
+  const n = Math.round((Date.parse(ret) - Date.parse(depart)) / 86400_000);
+  return n >= hunt.stay.min && n <= hunt.stay.max;
+}
+
 /** Sinh mọi tổ hợp ngày đi/ngày về hợp lệ (bỏ ngày đã qua) */
 export function buildQueries(hunt: Hunt): SearchQuery[] {
   const departs = eachDay(hunt.departDates.from, hunt.departDates.to).filter((d) => d >= today());
   if (!hunt.returnDates) return departs.map((departDate) => ({ hunt, departDate }));
   const returns = eachDay(hunt.returnDates.from, hunt.returnDates.to);
   const qs: SearchQuery[] = [];
-  for (const d of departs) for (const r of returns) if (r >= d) qs.push({ hunt, departDate: d, returnDate: r });
+  for (const d of departs) for (const r of returns) if (r >= d && stayOk(hunt, d, r)) qs.push({ hunt, departDate: d, returnDate: r });
   return qs;
 }
 
@@ -181,7 +188,10 @@ export class Hunter {
     type Combo = { d: string; r?: string; perAdult: number };
     const combos: Combo[] = [];
     if (!hunt.returnDates) for (const o of out) combos.push({ d: o.date, perAdult: o.p });
-    else for (const o of out) for (const b of back) if (b.date >= o.date) combos.push({ d: o.date, r: b.date, perAdult: o.p + b.p });
+    else
+      for (const o of out)
+        for (const b of back)
+          if (b.date >= o.date && stayOk(hunt, o.date, b.date)) combos.push({ d: o.date, r: b.date, perAdult: o.p + b.p });
     combos.sort((a, b) => a.perAdult - b.perAdult);
 
     const adults = hunt.passengers.filter((p) => p.type === "adult").length;

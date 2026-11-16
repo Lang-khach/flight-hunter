@@ -127,3 +127,8 @@ table.data td.num, table.data th.num { text-align: right; font-variant-numeric: 
 .u-w4 { width: 4.5rem; }
 
 [hidden] { display: none !important; }
+
+.tpl-list { display: flex; flex-wrap: wrap; gap: .4rem; }
+.tpl { display: inline-flex; }
+.tpl .btn:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.tpl .tpl-x { border-left: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; color: var(--muted); padding-left: .45rem; padding-right: .45rem; }

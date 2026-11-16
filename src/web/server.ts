@@ -13,6 +13,7 @@ import type { Storage } from "../storage.js";
 import { FREE_RATIO, freeSearchesLeft, getUsage } from "../usage.js";
 import { aggregate, listRoutes } from "../prices.js";
 import { airportByCode, searchAirports } from "../airports.js";
+import { suggestThreshold } from "../suggest.js";
 import { MAX_SURVEY_SEARCHES, survey, surveyCost, type SurveyRequest } from "../survey.js";
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "public");
@@ -211,6 +212,34 @@ export function startServer(opts: { port: number; host: string; store: Storage; 
     const a = airportByCode(req.params.code);
     if (!a) throw new ActionError("Không tìm thấy sân bay", 404);
     send(res, 200, a);
+  });
+
+  // ---------------- Gợi ý ngưỡng (giá VNA thật của đúng khoảng ngày) ----------------
+  route("POST", "/api/suggest-threshold", async (req, res) => {
+    const b = req.body;
+    const date = (x: unknown) => (typeof x === "string" && /^\d{4}-\d{2}-\d{2}$/.test(x) ? x : undefined);
+    const q = {
+      origin: String(b.origin ?? "").toUpperCase(),
+      destination: String(b.destination ?? "").toUpperCase(),
+      departFrom: date(b.departFrom),
+      departTo: date(b.departTo),
+      returnFrom: date(b.returnFrom),
+      returnTo: date(b.returnTo),
+      adults: Math.max(0, Number(b.adults) || 0),
+      children: Math.max(0, Number(b.children) || 0),
+      infants: Math.max(0, Number(b.infants) || 0),
+    };
+    if (!/^[A-Z]{3}$/.test(q.origin) || !/^[A-Z]{3}$/.test(q.destination)) throw new ActionError("Chọn điểm đi / điểm đến trước");
+    if (!q.departFrom || !q.departTo) throw new ActionError("Chọn ngày đi trước");
+    if (q.adults < 1) throw new ActionError("Cần ít nhất 1 người lớn");
+    let r;
+    try {
+      r = await suggestThreshold(loadConfig(), q as any);
+    } catch (e) {
+      throw new ActionError("Không lấy được giá Vietnam Airlines: " + (e as Error).message, 502);
+    }
+    if (!r) throw new ActionError("Vietnam Airlines chưa có giá cho khoảng ngày này (có thể chưa mở bán)", 404);
+    send(res, 200, r);
   });
 
   // ---------------- Biểu đồ giá ----------------

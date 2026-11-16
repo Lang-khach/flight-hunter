@@ -475,6 +475,60 @@ document.addEventListener("input", (e) => {
 document.addEventListener("focusout", (e) => { if (e.target.matches?.("[data-airport]")) resolveAirport(e.target); });
 document.addEventListener("focusin", (e) => { if (e.target.matches?.("[data-airport]")) onAirportInput(e.target); });
 
+
+// ================= Thư viện mẫu + chọn nhanh tháng =================
+const iso = (d) => d.toISOString().slice(0, 10);
+const addDays = (ymd, n) => iso(new Date(Date.parse(ymd + "T00:00:00Z") + n * 86400000));
+function monthOptions(selected) {
+  const now = new Date();
+  const out = [];
+  for (let i = 0; i < 13; i++) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + i, 1));
+    const v = iso(d).slice(0, 7);
+    out.push(`<option value="${v}" ${v === selected ? "selected" : ""}>Tháng ${d.getUTCMonth() + 1}/${d.getUTCFullYear()}</option>`);
+  }
+  return out.join("");
+}
+/** Khoảng ngày của tháng (bỏ phần đã qua) */
+function monthRange(ym) {
+  const [y, m] = ym.split("-").map(Number);
+  const first = `${ym}-01`, last = iso(new Date(Date.UTC(y, m, 0)));
+  const today = iso(new Date());
+  return { from: first < today ? today : first, to: last };
+}
+/** Tháng gần nhất (từ tháng này) trùng với số tháng của mẫu */
+function nextMonthFor(month) {
+  const now = new Date();
+  for (let i = 0; i < 13; i++) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + i, 1));
+    if (!month || d.getUTCMonth() + 1 === month) return iso(d).slice(0, 7);
+  }
+  return iso(now).slice(0, 7);
+}
+function huntFromTemplate(t) {
+  const ym = nextMonthFor(t.month);
+  const r = monthRange(ym);
+  const pax = [...Array(t.adults).fill("adult"), ...Array(t.children).fill("child"), ...Array(t.infants).fill("infant")].map((type) => ({ type }));
+  return {
+    id: "", enabled: true, origin: t.origin, destination: t.destination, departDates: r,
+    returnDates: t.roundTrip ? { from: addDays(r.from, t.stayDays), to: addDays(r.to, t.stayDays) } : undefined,
+    cabinClass: "economy", maxStops: 0, maxPrice: t.maxPrice || 0, bookingMode: "notify",
+    passengers: pax.length ? pax : [{ type: "adult" }], _month: ym, _stay: t.stayDays,
+  };
+}
+function templateFromHunt(h, name) {
+  const n = (ty) => h.passengers.filter((p) => p.type === ty).length;
+  const stay = h.stay ? Math.round((h.stay.min + h.stay.max) / 2) || 1 : h.returnDates ? Math.max(1, Math.round((Date.parse(h.returnDates.from) - Date.parse(h.departDates.from)) / 86400000)) : 4;
+  const base = `${h.origin}-${h.destination}${h.returnDates ? "-rt" : ""}`.toLowerCase();
+  let id = base, k = 2;
+  while ((S.cfg.templates || []).some((t) => t.id === id)) id = `${base}-${k++}`;
+  return {
+    id, name: name || `${h.origin} ${h.returnDates ? "⇄" : "→"} ${h.destination}`, origin: h.origin, destination: h.destination,
+    roundTrip: !!h.returnDates, stayDays: Math.min(30, stay), month: Number(h.departDates.from.slice(5, 7)),
+    adults: Math.max(1, n("adult")), children: n("child"), infants: n("infant"), ...(h.maxPrice ? { maxPrice: h.maxPrice } : {}),
+  };
+}
+
 // ================= Chuyến bay =================
 async function loadCfg() {
   S.cfg = await api("GET", "/api/config");
@@ -486,7 +540,13 @@ async function viewHunts() {
   v.innerHTML = `<div class="card muted">Đang tải…</div>`;
   try { await loadCfg(); } catch (e) { if (e.message !== "401") v.innerHTML = `<div class="card err">${esc(e.message)}</div>`; return; }
   const hs = S.cfg.hunts;
+  const tpls = S.cfg.templates || [];
   v.innerHTML = `
+    <div class="card stack">
+      <div class="row"><h3 class="u-m0">Thư viện chuyến mẫu</h3><span class="spacer"></span><button class="btn sm" data-action="tpl-new">＋ Mẫu mới</button></div>
+      <div class="muted small">Bấm một mẫu để tạo chuyến săn: chọn tháng, bấm "Gợi ý ngưỡng", rồi Lưu.</div>
+      <div class="tpl-list">${tpls.map((t, i) => `<span class="tpl"><button class="btn sm" data-action="tpl-use" data-i="${i}">${esc(t.name)}${t.month ? ` · T${t.month}` : ""}${t.adults + t.children + t.infants > 1 ? ` · ${t.adults + t.children + t.infants} khách` : ""}</button><button class="btn sm tpl-x" data-action="tpl-del" data-i="${i}" aria-label="Xoá mẫu ${esc(t.name)}">✕</button></span>`).join("") || '<span class="muted small">Thư viện trống.</span>'}</div>
+    </div>
     <div class="row"><h2 class="u-m0">Chuyến bay cần săn (${hs.length})</h2><span class="spacer"></span>
       <button class="btn primary" data-action="hunt-new">＋ Thêm chuyến</button></div>
     ${hs.map((h, i) => {
@@ -495,11 +555,12 @@ async function viewHunts() {
         <div class="row"><b>${esc(h.origin)} → ${esc(h.destination)}</b>
           <span class="badge ${mCls}">${mLabel}</span>${h.enabled ? "" : '<span class="badge mute">Tạm dừng</span>'}
           <span class="spacer"></span><span class="mono muted small">${esc(h.id)}</span></div>
-        <div class="small muted">${esc(h.departDates.from)} → ${esc(h.departDates.to)}${h.returnDates ? ` · về ${esc(h.returnDates.from)} → ${esc(h.returnDates.to)}` : " · 1 chiều"}
+        <div class="small muted">${esc(h.departDates.from)} → ${esc(h.departDates.to)}${h.returnDates ? ` · về ${esc(h.returnDates.from)} → ${esc(h.returnDates.to)}${h.stay ? ` · ở ${h.stay.min}–${h.stay.max} ngày` : ""}` : " · 1 chiều"}
           · ${paxSummary(h.passengers)} · ngưỡng ${money(h.maxPrice, S.cfg.currency)}</div>
         <div class="row">
           <button class="btn sm" data-action="hunt-edit" data-i="${i}">✏️ Sửa</button>
           <button class="btn sm" data-action="hunt-toggle" data-i="${i}">${h.enabled ? "⏸ Tạm dừng" : "▶️ Bật"}</button>
+          <button class="btn sm" data-action="hunt-to-tpl" data-i="${i}">⭐ Lưu làm mẫu</button>
           <button class="btn sm danger" data-action="hunt-del" data-i="${i}">🗑 Xoá</button>
         </div></div>`;
     }).join("")}`;
@@ -535,9 +596,9 @@ function paxBlock(p, i) {
     </div></div>`;
 }
 
-function openHuntEditor(idx) {
+function openHuntEditor(idx, preset, asTemplate = false) {
   const isNew = idx == null;
-  const h = isNew
+  const h = preset ? preset : isNew
     ? { id: "", enabled: true, origin: "", destination: "", departDates: { from: "", to: "" }, cabinClass: "economy", maxStops: 0, maxPrice: 0, bookingMode: "notify", passengers: [blankPax()] }
     : structuredClone(S.cfg.hunts[idx]);
   const mode = h.bookingMode || (h.autoBook ? "instant" : "notify");
@@ -545,12 +606,14 @@ function openHuntEditor(idx) {
   const sel = (name, arr, val) => `<select name="${name}">${arr.map(([k, l]) => `<option value="${k}" ${String(k) === String(val) ? "selected" : ""}>${l}</option>`).join("")}</select>`;
   modal(`
   <form data-form="hunt" data-idx="${isNew ? "" : idx}" class="stack">
-    <h2>${isNew ? "Thêm chuyến cần săn" : "Sửa chuyến " + esc(h.id)}</h2>
+    <h2>${asTemplate ? "Tạo mẫu mới cho thư viện" : isNew ? "Thêm chuyến cần săn" : "Sửa chuyến " + esc(h.id)}</h2>
+    <input type="hidden" name="stay" value="${h._stay || 4}" />
     <div class="grid2">
       <label>Tên gợi nhớ (để trống sẽ tự đặt)<input name="id" value="${esc(h.id)}" placeholder="vd: tet-ve-que" pattern="[A-Za-z0-9_\\-]+" /></label>
       <label class="u-end check"><input type="checkbox" name="enabled" ${h.enabled ? "checked" : ""} /> Đang bật</label>
       <label>Điểm đi (mã hoặc tên thành phố)${airportInput("origin", h.origin, "HAN hoặc Hà Nội")}</label>
       <label>Điểm đến (mã hoặc tên thành phố)${airportInput("destination", h.destination, "SGN hoặc Sài Gòn")}</label>
+      <label>Chọn nhanh tháng bay<select name="quickMonth" data-action="quick-month"><option value="">— tự chọn ngày —</option>${monthOptions(h._month || (h.departDates.from || "").slice(0, 7))}</select></label>
       <label>Ngày đi từ<input name="departFrom" type="date" value="${esc(h.departDates.from)}" required /></label>
       <label>Ngày đi đến<input name="departTo" type="date" value="${esc(h.departDates.to)}" required /></label>
     </div>
@@ -558,10 +621,13 @@ function openHuntEditor(idx) {
     <div class="grid2" id="return-box" ${h.returnDates ? "" : "hidden"}>
       <label>Ngày về từ<input name="returnFrom" type="date" value="${esc(h.returnDates?.from)}" /></label>
       <label>Ngày về đến<input name="returnTo" type="date" value="${esc(h.returnDates?.to)}" /></label>
+      <label>Ở lại ít nhất (ngày)<input name="stayMin" type="number" min="0" max="60" value="${h.stay?.min ?? Math.max(1, (h._stay || 4) - 1)}" /></label>
+      <label>Ở lại nhiều nhất (ngày)<input name="stayMax" type="number" min="0" max="90" value="${h.stay?.max ?? (h._stay || 4) + 1}" /></label>
     </div>
     ${isVna
       ? `<input type="hidden" name="cabinClass" value="economy" /><input type="hidden" name="maxStops" value="${h.maxStops ?? 0}" /><input type="hidden" name="airlines" value="" /><input type="hidden" name="timeFrom" value="" /><input type="hidden" name="timeTo" value="" /><input type="hidden" name="bookingMode" value="notify" />
     <div class="grid2"><label>Ngưỡng giá – tổng cả đoàn (${esc(S.cfg.currency)})<input name="maxPrice" type="number" min="1" step="any" value="${h.maxPrice || ""}" required /></label></div>
+    <div class="row"><button type="button" class="btn sm" data-action="suggest">💡 Gợi ý ngưỡng từ giá VNA</button><span class="small" id="sg-out"></span></div>
     <div class="card u-inset small">Nguồn <b>Vietnam Airlines</b> (hạng Phổ thông): tool canh giá rẻ nhất mỗi ngày và báo Telegram khi tổng cả đoàn ≤ ngưỡng. Anh đặt trên web/app VNA, chọn <b>Trả sau</b> để giữ chỗ miễn phí.</div>`
       : `<div class="grid2">
       <label>Hạng ghế${sel("cabinClass", [["economy", "Phổ thông"], ["premium_economy", "Phổ thông đặc biệt"], ["business", "Thương gia"], ["first", "Hạng nhất"]], h.cabinClass)}</label>
@@ -575,6 +641,9 @@ function openHuntEditor(idx) {
     <div class="row"><h3 class="u-m0">Hành khách</h3><span class="muted small">Số vé = số hành khách.</span></div>
     <div id="pax-list" class="stack">${h.passengers.map(paxBlock).join("")}</div>
     <button type="button" class="btn" data-action="pax-add">＋ Thêm hành khách</button>
+    <label class="check"><input type="checkbox" name="saveTemplate" data-action="tpl-toggle" ${asTemplate ? "checked" : ""} /> Lưu vào thư viện mẫu</label>
+    <label ${asTemplate ? "" : "hidden"} id="tpl-name-box">Tên mẫu<input name="templateName" placeholder="vd: Về quê Tết" /></label>
+    <label class="check" ${asTemplate ? "" : "hidden"} id="tpl-only-box"><input type="checkbox" name="templateOnly" ${asTemplate ? "checked" : ""} /> Chỉ lưu mẫu, chưa tạo chuyến săn</label>
     <div class="err" id="hunt-err"></div>
     <div class="row"><button class="btn primary" type="submit">Lưu</button><button type="button" class="btn" data-action="close">Huỷ</button></div>
   </form>`);
@@ -605,7 +674,10 @@ function readHuntForm(f) {
       return p;
     }),
   };
-  if (g("tripType") === "rt") h.returnDates = { from: g("returnFrom"), to: g("returnTo") };
+  if (g("tripType") === "rt") {
+    h.returnDates = { from: g("returnFrom"), to: g("returnTo") };
+    if (g("stayMin") !== "" && g("stayMax") !== "") h.stay = { min: Number(g("stayMin")), max: Number(g("stayMax")) };
+  }
   const al = g("airlines").split(/[,\s]+/).filter(Boolean).map((s) => s.toUpperCase());
   if (al.length) h.airlines = al;
   if (g("timeFrom") && g("timeTo")) h.departTimeWindow = { from: g("timeFrom"), to: g("timeTo") };
@@ -772,6 +844,39 @@ const actions = {
     return busy(el, async () => { await api("POST", `/api/hunts/${encodeURIComponent(el.dataset.id)}/reset`); renderTab(); });
   },
   "hunt-new": () => openHuntEditor(null),
+  "tpl-use": (el) => openHuntEditor(null, huntFromTemplate(S.cfg.templates[el.dataset.i])),
+  "tpl-new": () => openHuntEditor(null, { id: "", enabled: true, origin: "", destination: "", departDates: { from: "", to: "" }, cabinClass: "economy", maxStops: 0, maxPrice: 0, bookingMode: "notify", passengers: [{ type: "adult" }] }, true),
+  "tpl-del": (el) => {
+    const t = S.cfg.templates[el.dataset.i];
+    if (!confirm(`Xoá mẫu "${t.name}" khỏi thư viện?`)) return;
+    return busy(null, async () => { const cfg = structuredClone(S.cfg); cfg.templates.splice(el.dataset.i, 1); await saveCfg(cfg); toast("Đã xoá mẫu"); viewHunts(); });
+  },
+  "hunt-to-tpl": (el) => {
+    const h = S.cfg.hunts[el.dataset.i];
+    const name = prompt("Tên mẫu:", `${h.origin} ${h.returnDates ? "⇄" : "→"} ${h.destination}`);
+    if (name === null) return;
+    return busy(el, async () => { const cfg = structuredClone(S.cfg); cfg.templates = [...(cfg.templates || []), templateFromHunt(h, name.trim())]; await saveCfg(cfg); toast("Đã lưu vào thư viện"); viewHunts(); });
+  },
+  "tpl-toggle": (el) => { $("#tpl-name-box").hidden = !el.checked; $("#tpl-only-box").hidden = !el.checked; },
+  "quick-month": (el) => {
+    if (!el.value) return;
+    const f = el.form, r = monthRange(el.value), stay = Number(f.stay.value) || 4;
+    f.departFrom.value = r.from; f.departTo.value = r.to;
+    if (f.tripType.value === "rt") { f.returnFrom.value = addDays(r.from, stay); f.returnTo.value = addDays(r.to, stay); }
+  },
+  suggest: (el) => busy(el, async () => {
+    const f = el.form;
+    await Promise.all($$("[data-airport]", f).map(resolveAirport));
+    const n = (ty) => $$("[data-pax] [name=type]", f).filter((x) => x.value === ty).length;
+    const rt = f.tripType.value === "rt";
+    const r = await api("POST", "/api/suggest-threshold", {
+      origin: f.origin.value, destination: f.destination.value, departFrom: f.departFrom.value, departTo: f.departTo.value,
+      returnFrom: rt ? f.returnFrom.value : undefined, returnTo: rt ? f.returnTo.value : undefined,
+      adults: n("adult"), children: n("child"), infants: n("infant"),
+    });
+    f.maxPrice.value = String(r.total.suggested);
+    $("#sg-out").innerHTML = `Rẻ nhất hiện tại ${money(r.total.min, "")}đ · gợi ý <b>${money(r.total.suggested, "")}đ</b> (~1/4 số ngày rẻ hơn mức này, ${r.days.out}${rt ? "+" + r.days.back : ""} ngày có giá)`;
+  }),
   "hunt-edit": (el) => openHuntEditor(Number(el.dataset.i)),
   "hunt-toggle": (el) => busy(el, async () => {
     const cfg = structuredClone(S.cfg);
@@ -793,7 +898,11 @@ const actions = {
     el.closest("[data-pax]").remove();
     $$("[data-pax] .pax-head span", list).forEach((s, i) => (s.textContent = `Hành khách ${i + 1}`));
   },
-  "toggle-return": (el) => { $("#return-box").hidden = el.value !== "rt"; },
+  "toggle-return": (el) => {
+    $("#return-box").hidden = el.value !== "rt";
+    const f = el.form, stay = Number(f.stay?.value) || 4;
+    if (el.value === "rt" && f.departFrom.value && !f.returnFrom.value) { f.returnFrom.value = addDays(f.departFrom.value, stay); f.returnTo.value = addDays(f.departTo.value || f.departFrom.value, stay); }
+  },
   "tg-check": (el) => busy(el, async () => {
     const r = await api("POST", "/api/telegram/check", { botToken: $('[name="botToken"]').value });
     $("#tg-bot").innerHTML = `✅ Bot: <b>@${esc(r.username)}</b> (${esc(r.name)})`;
@@ -860,7 +969,16 @@ const forms = {
     const h = readHuntForm(f);
     const cfg = structuredClone(S.cfg);
     const idx = f.dataset.idx === "" ? null : Number(f.dataset.idx);
-    if (idx == null) cfg.hunts.push(h); else cfg.hunts[idx] = h;
+    const onlyTpl = f.saveTemplate.checked && f.templateOnly.checked;
+    if (f.saveTemplate.checked) cfg.templates = [...(cfg.templates || []), templateFromHunt(h, f.templateName.value.trim())];
+    if (!onlyTpl) {
+      if (idx == null) {
+        let id = h.id, k = 2;
+        while (cfg.hunts.some((x) => x.id === id)) id = `${h.id}-${k++}`;
+        h.id = id;
+        cfg.hunts.push(h);
+      } else cfg.hunts[idx] = h;
+    }
     const btn = $("button[type=submit]", f);
     btn.disabled = true;
     try { await saveCfg(cfg); closeModal(); toast("Đã lưu – áp dụng từ vòng quét tiếp theo"); viewHunts(); }
