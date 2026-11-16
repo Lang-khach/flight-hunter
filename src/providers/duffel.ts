@@ -92,7 +92,7 @@ export class DuffelProvider implements FlightProvider {
     const passengers = hunt.passengers.map((p) => {
       if (p.type === "adult") return { type: "adult" };
       if (p.type === "infant") return { type: "infant_without_seat" };
-      return { age: ageOn(p.bornOn, q.departDate) };
+      return { age: p.bornOn ? ageOn(p.bornOn, q.departDate) : 8 };
     });
 
     const data: any = await this.call(

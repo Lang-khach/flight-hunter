@@ -9,15 +9,16 @@ const dateRange = z
   .object({ from: z.coerce.string().pipe(isoDate), to: z.coerce.string().pipe(isoDate) })
   .refine((r) => r.from <= r.to, "from phải <= to");
 
+/** Thông tin chi tiết chỉ bắt buộc khi tool tự đặt/giữ chỗ (Duffel). Canh giá chỉ cần loại khách. */
 export const PassengerSchema = z.object({
   type: z.enum(["adult", "child", "infant"]),
-  title: z.enum(["mr", "ms", "mrs", "miss", "dr"]),
-  gender: z.enum(["m", "f"]),
-  givenName: z.string().min(1),
-  familyName: z.string().min(1),
-  bornOn: z.coerce.string().pipe(isoDate),
-  email: z.string().email(),
-  phone: z.string().regex(/^\+\d{8,15}$/, "SĐT dạng quốc tế, ví dụ +84901234567"),
+  title: z.enum(["mr", "ms", "mrs", "miss", "dr"]).optional(),
+  gender: z.enum(["m", "f"]).optional(),
+  givenName: z.string().min(1).optional(),
+  familyName: z.string().min(1).optional(),
+  bornOn: z.coerce.string().pipe(isoDate).optional(),
+  email: z.string().email().optional(),
+  phone: z.string().regex(/^\+\d{8,15}$/, "SĐT dạng quốc tế, ví dụ +84901234567").optional(),
 });
 
 export const HuntSchema = z
@@ -71,6 +72,18 @@ export const ConfigSchema = z.object({
     })
     .default({}),
   hunts: z.array(HuntSchema).default([]),
+}).superRefine((c, ctx) => {
+  // Tự đặt / giữ chỗ (không phải nguồn VNA) cần đủ thông tin từng hành khách
+  if (c.provider === "vna") return;
+  c.hunts.forEach((h, hi) => {
+    const mode = h.bookingMode ?? (h.autoBook ? "instant" : "notify");
+    if (mode === "notify") return;
+    h.passengers.forEach((p, pi) => {
+      const missing = (["title", "gender", "givenName", "familyName", "bornOn", "email", "phone"] as const).filter((k) => !p[k]);
+      if (missing.length)
+        ctx.addIssue({ code: "custom", path: ["hunts", hi, "passengers", pi], message: `[${h.id}] Hành khách ${pi + 1} thiếu ${missing.join(", ")} (bắt buộc khi tự giữ chỗ/đặt vé)` });
+    });
+  });
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

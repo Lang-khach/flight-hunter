@@ -128,17 +128,17 @@ async function viewDashboard() {
         <button class="btn primary" data-action="scan" ${sc.running ? "disabled" : ""}>🔎 Quét ngay</button>
       </div>
       ${(st.hunts || []).length ? "" : `<div class="card muted">Chưa có chuyến nào. <button class="btn sm" data-action="tab" data-tab="hunts">Thêm chuyến</button></div>`}
-      ${(st.hunts || []).map((h) => huntCard(h, st.currency)).join("")}`;
+      ${(st.hunts || []).map((h) => huntCard(h, st.currency, st.provider)).join("")}`;
   };
   v.innerHTML = `<div class="card muted">Đang tải…</div>`;
   await load();
   S.timer = setInterval(load, 15000);
 }
 
-function huntCard(h, cur) {
+function huntCard(h, cur, provider) {
   const b = h.booked;
   const cls = b?.status === "held" ? "held" : b?.status === "paid" ? "paid" : "";
-  const [mLabel, mCls] = MODE[h.mode] || [h.mode, "mute"];
+  const [mLabel, mCls] = provider === "vna" ? MODE.notify : MODE[h.mode] || [h.mode, "mute"];
   let order = "";
   if (b?.status === "held") {
     const left = b.paymentRequiredBy ? (new Date(b.paymentRequiredBy) - Date.now()) / 3600000 : null;
@@ -372,6 +372,7 @@ function renderChart() {
 }
 
 function surveyForm() {
+  const isVna = CH.meta?.provider === "vna";
   const t = new Date(), d0 = t.toISOString().slice(0, 10);
   const d1 = new Date(t.getTime() + (CH.meta?.provider === "vna" ? 180 : 90) * 86400000).toISOString().slice(0, 10);
   const r = CH.key ? CH.meta.routes.find((x) => x.key === CH.key) : null;
@@ -383,10 +384,11 @@ function surveyForm() {
       <label>Điểm đến${airportInput("destination", r?.destination || "", "SGN hoặc Sài Gòn")}</label>
       <label>Từ ngày<input name="from" type="date" value="${d0}" required /></label>
       <label>Đến ngày<input name="to" type="date" value="${d1}" required /></label>
+      <label>Loại vé<select name="trip" data-action="sv-trip"><option value="ow">Một chiều</option><option value="rt">Khứ hồi</option></select></label>
+      ${isVna ? "" : `<label id="sv-stay" hidden>Ở lại (ngày)<input name="stayDays" type="number" min="1" max="60" value="3" /></label>
       <label>Lấy mẫu<select name="stepDays"><option value="1">Mỗi ngày</option><option value="2">Cách 2 ngày</option><option value="3" selected>Cách 3 ngày</option><option value="7">Mỗi tuần</option></select></label>
-      <label>Loại vé<select name="stayDays"><option value="0">1 chiều</option><option value="3">Khứ hồi, ở 3 ngày</option><option value="5">Khứ hồi, ở 5 ngày</option><option value="7">Khứ hồi, ở 7 ngày</option></select></label>
       <label>Hạng ghế<select name="cabinClass"><option value="economy">Phổ thông</option><option value="business">Thương gia</option></select></label>
-      <label>Điểm dừng<select name="maxStops"><option value="0">Bay thẳng</option><option value="1">≤ 1</option></select></label>
+      <label>Điểm dừng<select name="maxStops"><option value="0">Bay thẳng</option><option value="1">≤ 1</option></select></label>`}
     </div>
     <div class="small" id="sv-est"></div>
     <div id="sv-status" class="small"></div>
@@ -396,7 +398,15 @@ function surveyForm() {
 }
 
 function surveyBody(f) {
-  return { origin: f.origin.value, destination: f.destination.value, from: f.from.value, to: f.to.value, stepDays: Number(f.stepDays.value), stayDays: Number(f.stayDays.value), cabinClass: f.cabinClass.value, maxStops: Number(f.maxStops.value) };
+  const rt = f.trip.value === "rt";
+  const num = (n, d) => (f.elements[n] ? Number(f.elements[n].value) : d);
+  return {
+    origin: f.origin.value, destination: f.destination.value, from: f.from.value, to: f.to.value,
+    stepDays: num("stepDays", 1),
+    stayDays: rt ? num("stayDays", 1) || 1 : 0, // VNA: khứ hồi = khảo sát cả 2 chiều
+    cabinClass: f.elements.cabinClass?.value ?? "economy",
+    maxStops: num("maxStops", 0),
+  };
 }
 
 let surveyTimer;
@@ -477,13 +487,13 @@ async function viewHunts() {
     <div class="row"><h2 class="u-m0">Chuyến bay cần săn (${hs.length})</h2><span class="spacer"></span>
       <button class="btn primary" data-action="hunt-new">＋ Thêm chuyến</button></div>
     ${hs.map((h, i) => {
-      const [mLabel, mCls] = MODE[h.bookingMode || (h.autoBook ? "instant" : "notify")];
+      const [mLabel, mCls] = S.cfg.provider === "vna" ? MODE.notify : MODE[h.bookingMode || (h.autoBook ? "instant" : "notify")];
       return `<div class="card stack">
         <div class="row"><b>${esc(h.origin)} → ${esc(h.destination)}</b>
           <span class="badge ${mCls}">${mLabel}</span>${h.enabled ? "" : '<span class="badge mute">Tạm dừng</span>'}
           <span class="spacer"></span><span class="mono muted small">${esc(h.id)}</span></div>
         <div class="small muted">${esc(h.departDates.from)} → ${esc(h.departDates.to)}${h.returnDates ? ` · về ${esc(h.returnDates.from)} → ${esc(h.returnDates.to)}` : " · 1 chiều"}
-          · ${h.passengers.length} khách · ngưỡng ${money(h.maxPrice, S.cfg.currency)}</div>
+          · ${paxSummary(h.passengers)} · ngưỡng ${money(h.maxPrice, S.cfg.currency)}</div>
         <div class="row">
           <button class="btn sm" data-action="hunt-edit" data-i="${i}">✏️ Sửa</button>
           <button class="btn sm" data-action="hunt-toggle" data-i="${i}">${h.enabled ? "⏸ Tạm dừng" : "▶️ Bật"}</button>
@@ -492,48 +502,65 @@ async function viewHunts() {
     }).join("")}`;
 }
 
-const blankPax = () => ({ type: "adult", title: "mr", gender: "m", givenName: "", familyName: "", bornOn: "", email: "", phone: "+84" });
+const blankPax = () => ({ type: "adult" });
+
+function paxSummary(list) {
+  const n = (t) => list.filter((p) => p.type === t).length;
+  return [n("adult") && `${n("adult")} người lớn`, n("child") && `${n("child")} trẻ em`, n("infant") && `${n("infant")} em bé`].filter(Boolean).join(", ");
+}
 
 function paxBlock(p, i) {
   const opt = (arr, val) => arr.map(([k, l]) => `<option value="${k}" ${k === val ? "selected" : ""}>${l}</option>`).join("");
+  const typeSel = `<label>Loại<select name="type">${opt([["adult", "Người lớn (từ 12 tuổi)"], ["child", "Trẻ em (2–11 tuổi)"], ["infant", "Em bé (dưới 2 tuổi)"]], p.type)}</select></label>`;
+  if (S.cfg.provider === "vna") {
+    // Chỉ canh giá: chỉ cần loại khách; giữ nguyên thông tin cũ (nếu có) ở dạng ẩn
+    const keep = ["title", "gender", "familyName", "givenName", "bornOn", "email", "phone"].map((k) => `<input type="hidden" name="${k}" value="${esc(p[k] ?? "")}" />`).join("");
+    return `<div class="pax" data-pax><div class="pax-head"><span>Hành khách ${i + 1}</span><button type="button" class="btn sm danger" data-action="pax-del">Xoá</button></div>${typeSel}${keep}</div>`;
+  }
   return `<div class="pax" data-pax>
     <div class="pax-head"><span>Hành khách ${i + 1}</span><button type="button" class="btn sm danger" data-action="pax-del">Xoá</button></div>
+    <div class="muted small">Chỉ cần điền đủ khi chọn tự giữ chỗ / tự đặt vé.</div>
     <div class="grid2">
-      <label>Loại<select name="type">${opt([["adult", "Người lớn (≥12)"], ["child", "Trẻ em (2–11)"], ["infant", "Em bé (<2)"]], p.type)}</select></label>
-      <label>Danh xưng<select name="title">${opt([["mr", "Mr"], ["mrs", "Mrs"], ["ms", "Ms"], ["miss", "Miss"], ["dr", "Dr"]], p.title)}</select></label>
-      <label>Giới tính<select name="gender">${opt([["m", "Nam"], ["f", "Nữ"]], p.gender)}</select></label>
-      <label>Họ (không dấu)<input name="familyName" value="${esc(p.familyName)}" placeholder="NGUYEN" required /></label>
-      <label>Tên đệm + tên (không dấu)<input name="givenName" value="${esc(p.givenName)}" placeholder="VAN AN" required /></label>
-      <label>Ngày sinh<input name="bornOn" type="date" value="${esc(p.bornOn)}" required /></label>
-      <label>Email<input name="email" type="email" value="${esc(p.email)}" required /></label>
-      <label>Điện thoại<input name="phone" value="${esc(p.phone)}" placeholder="+84901234567" required /></label>
+      ${typeSel}
+      <label>Danh xưng<select name="title"><option value=""></option>${opt([["mr", "Mr"], ["mrs", "Mrs"], ["ms", "Ms"], ["miss", "Miss"], ["dr", "Dr"]], p.title)}</select></label>
+      <label>Giới tính<select name="gender"><option value=""></option>${opt([["m", "Nam"], ["f", "Nữ"]], p.gender)}</select></label>
+      <label>Họ (không dấu)<input name="familyName" value="${esc(p.familyName)}" placeholder="NGUYEN" /></label>
+      <label>Tên đệm + tên (không dấu)<input name="givenName" value="${esc(p.givenName)}" placeholder="VAN AN" /></label>
+      <label>Ngày sinh<input name="bornOn" type="date" value="${esc(p.bornOn)}" /></label>
+      <label>Email<input name="email" type="email" value="${esc(p.email)}" /></label>
+      <label>Điện thoại<input name="phone" value="${esc(p.phone)}" placeholder="+84901234567" /></label>
     </div></div>`;
 }
 
 function openHuntEditor(idx) {
   const isNew = idx == null;
   const h = isNew
-    ? { id: "", enabled: true, origin: "", destination: "", departDates: { from: "", to: "" }, cabinClass: "economy", maxStops: 0, maxPrice: 0, bookingMode: "hold", passengers: [blankPax()] }
+    ? { id: "", enabled: true, origin: "", destination: "", departDates: { from: "", to: "" }, cabinClass: "economy", maxStops: 0, maxPrice: 0, bookingMode: "notify", passengers: [blankPax()] }
     : structuredClone(S.cfg.hunts[idx]);
   const mode = h.bookingMode || (h.autoBook ? "instant" : "notify");
+  const isVna = S.cfg.provider === "vna";
   const sel = (name, arr, val) => `<select name="${name}">${arr.map(([k, l]) => `<option value="${k}" ${String(k) === String(val) ? "selected" : ""}>${l}</option>`).join("")}</select>`;
   modal(`
   <form data-form="hunt" data-idx="${isNew ? "" : idx}" class="stack">
     <h2>${isNew ? "Thêm chuyến cần săn" : "Sửa chuyến " + esc(h.id)}</h2>
     <div class="grid2">
-      <label>Mã chuyến (id)<input name="id" value="${esc(h.id)}" placeholder="han-sgn-tet" pattern="[A-Za-z0-9_\\-]+" required /></label>
+      <label>Tên gợi nhớ (để trống sẽ tự đặt)<input name="id" value="${esc(h.id)}" placeholder="vd: tet-ve-que" pattern="[A-Za-z0-9_\\-]+" /></label>
       <label class="u-end check"><input type="checkbox" name="enabled" ${h.enabled ? "checked" : ""} /> Đang bật</label>
       <label>Điểm đi (mã hoặc tên thành phố)${airportInput("origin", h.origin, "HAN hoặc Hà Nội")}</label>
       <label>Điểm đến (mã hoặc tên thành phố)${airportInput("destination", h.destination, "SGN hoặc Sài Gòn")}</label>
       <label>Ngày đi từ<input name="departFrom" type="date" value="${esc(h.departDates.from)}" required /></label>
       <label>Ngày đi đến<input name="departTo" type="date" value="${esc(h.departDates.to)}" required /></label>
     </div>
-    <label class="check"><input type="checkbox" name="roundTrip" data-action="toggle-return" ${h.returnDates ? "checked" : ""} /> Khứ hồi</label>
+    <label>Loại vé<select name="tripType" data-action="toggle-return"><option value="ow" ${h.returnDates ? "" : "selected"}>Một chiều</option><option value="rt" ${h.returnDates ? "selected" : ""}>Khứ hồi</option></select></label>
     <div class="grid2" id="return-box" ${h.returnDates ? "" : "hidden"}>
       <label>Ngày về từ<input name="returnFrom" type="date" value="${esc(h.returnDates?.from)}" /></label>
       <label>Ngày về đến<input name="returnTo" type="date" value="${esc(h.returnDates?.to)}" /></label>
     </div>
-    <div class="grid2">
+    ${isVna
+      ? `<input type="hidden" name="cabinClass" value="economy" /><input type="hidden" name="maxStops" value="${h.maxStops ?? 0}" /><input type="hidden" name="airlines" value="" /><input type="hidden" name="timeFrom" value="" /><input type="hidden" name="timeTo" value="" /><input type="hidden" name="bookingMode" value="notify" />
+    <div class="grid2"><label>Ngưỡng giá – tổng cả đoàn (${esc(S.cfg.currency)})<input name="maxPrice" type="number" min="1" step="any" value="${h.maxPrice || ""}" required /></label></div>
+    <div class="card u-inset small">Nguồn <b>Vietnam Airlines</b> (hạng Phổ thông): tool canh giá rẻ nhất mỗi ngày và báo Telegram khi tổng cả đoàn ≤ ngưỡng. Anh đặt trên web/app VNA, chọn <b>Trả sau</b> để giữ chỗ miễn phí.</div>`
+      : `<div class="grid2">
       <label>Hạng ghế${sel("cabinClass", [["economy", "Phổ thông"], ["premium_economy", "Phổ thông đặc biệt"], ["business", "Thương gia"], ["first", "Hạng nhất"]], h.cabinClass)}</label>
       <label>Điểm dừng tối đa${sel("maxStops", [[0, "Bay thẳng"], [1, "≤ 1"], [2, "≤ 2"]], h.maxStops)}</label>
       <label>Hãng (mã IATA, cách nhau dấu phẩy)<input name="airlines" value="${esc((h.airlines || []).join(", "))}" placeholder="VN, VJ, QH (bỏ trống = tất cả)" /></label>
@@ -541,9 +568,8 @@ function openHuntEditor(idx) {
       <label>Đến giờ<input name="timeTo" type="time" value="${esc(h.departTimeWindow?.to)}" /></label>
       <label>Ngưỡng giá – tổng cả đoàn (${esc(S.cfg.currency)})<input name="maxPrice" type="number" min="1" step="any" value="${h.maxPrice || ""}" required /></label>
     </div>
-    ${S.cfg.provider === "vna" ? `<div class="card u-inset small">Nguồn <b>Vietnam Airlines</b>: tool canh giá thấp nhất mỗi ngày và báo Telegram. Không lọc được giờ bay/điểm dừng, không tự giữ chỗ (trang đặt vé VNA có xác minh chống bot) – anh đặt trên web/app VNA, chọn <b>Trả sau</b> để giữ chỗ miễn phí.</div>` : ""}
-    <label>Khi giá ≤ ngưỡng${sel("bookingMode", [["notify", "Chỉ báo Telegram"], ["hold", "Tự giữ chỗ, báo tôi vào thanh toán"], ["instant", "Tự đặt + thanh toán luôn (cần ALLOW_AUTOBOOK)"]], mode)}</label>
-    <div class="row"><h3 class="u-m0">Hành khách</h3><span class="muted small">Số vé = số hành khách. Tên viết như CCCD/hộ chiếu.</span></div>
+    <label>Khi giá ≤ ngưỡng${sel("bookingMode", [["notify", "Chỉ báo Telegram"], ["hold", "Tự giữ chỗ, báo tôi vào thanh toán"], ["instant", "Tự đặt + thanh toán luôn (cần ALLOW_AUTOBOOK)"]], mode)}</label>`}
+    <div class="row"><h3 class="u-m0">Hành khách</h3><span class="muted small">Số vé = số hành khách.</span></div>
     <div id="pax-list" class="stack">${h.passengers.map(paxBlock).join("")}</div>
     <button type="button" class="btn" data-action="pax-add">＋ Thêm hành khách</button>
     <div class="err" id="hunt-err"></div>
@@ -553,23 +579,30 @@ function openHuntEditor(idx) {
 
 function readHuntForm(f) {
   const g = (n) => f.elements[n]?.value?.trim() ?? "";
+  const origin = g("origin").toUpperCase(), destination = g("destination").toUpperCase();
+  const slug = (x) => x.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-|-$/g, "");
   const h = {
-    id: g("id"),
+    id: g("id") ? slug(g("id")) : slug(`${origin}-${destination}-${g("departFrom").slice(5).replace("-", "")}`),
     enabled: f.elements.enabled.checked,
-    origin: g("origin").toUpperCase(),
-    destination: g("destination").toUpperCase(),
+    origin,
+    destination,
     departDates: { from: g("departFrom"), to: g("departTo") },
-    cabinClass: g("cabinClass"),
-    maxStops: Number(g("maxStops")),
+    cabinClass: g("cabinClass") || "economy",
+    maxStops: Number(g("maxStops") || 0),
     maxPrice: Number(g("maxPrice")),
-    bookingMode: g("bookingMode"),
+    bookingMode: g("bookingMode") || "notify",
     autoBook: false,
     passengers: $$("[data-pax]", f).map((el) => {
-      const v = (n) => $(`[name="${n}"]`, el).value.trim();
-      return { type: v("type"), title: v("title"), gender: v("gender"), givenName: v("givenName").toUpperCase(), familyName: v("familyName").toUpperCase(), bornOn: v("bornOn"), email: v("email"), phone: v("phone").replace(/[\s.-]/g, "") };
+      const v = (n) => $(`[name="${n}"]`, el)?.value?.trim() ?? "";
+      const p = { type: v("type") };
+      for (const k of ["title", "gender", "bornOn", "email"]) if (v(k)) p[k] = v(k);
+      if (v("givenName")) p.givenName = v("givenName").toUpperCase();
+      if (v("familyName")) p.familyName = v("familyName").toUpperCase();
+      if (v("phone") && v("phone") !== "+84") p.phone = v("phone").replace(/[\s.-]/g, "");
+      return p;
     }),
   };
-  if (f.elements.roundTrip.checked) h.returnDates = { from: g("returnFrom"), to: g("returnTo") };
+  if (g("tripType") === "rt") h.returnDates = { from: g("returnFrom"), to: g("returnTo") };
   const al = g("airlines").split(/[,\s]+/).filter(Boolean).map((s) => s.toUpperCase());
   if (al.length) h.airlines = al;
   if (g("timeFrom") && g("timeTo")) h.departTimeWindow = { from: g("timeFrom"), to: g("timeTo") };
@@ -632,7 +665,7 @@ async function viewSettings() {
       <label>Chu kỳ quét (phút)<input name="checkIntervalMinutes" type="number" min="1" value="${c.checkIntervalMinutes}" /></label>
       <label>Số lượt tìm tối đa mỗi vòng<input name="maxSearchesPerRun" type="number" min="1" value="${c.maxSearchesPerRun}" /></label>
     </div>
-    <label class="check"><input type="checkbox" name="freeSearchGuard" ${c.freeSearchGuard ? "checked" : ""} /> Giới hạn lượt tìm trong mức miễn phí của Duffel (1500 lượt / 1 đơn / tháng)</label>
+    <label class="check"><input type="checkbox" name="freeSearchGuard" ${c.freeSearchGuard ? "checked" : ""} /> Giới hạn lượt tìm trong mức miễn phí của Duffel (1500 lượt / 1 đơn / tháng) – chỉ áp dụng nguồn Duffel</label>
     <div class="muted small">Vượt mức Duffel tính $0.005/lượt. Ví dụ 6 lượt × 12 vòng/ngày ≈ 2.160 lượt/tháng. Nên đặt chu kỳ 2–3 giờ và khoảng ngày hẹp.</div>
     <label>Tỷ giá (mỗi dòng: MÃ=giá trị)<textarea name="fxRates" rows="4" class="mono">${esc(Object.entries(c.fxRates).map(([k, v]) => `${k}=${v}`).join("\n"))}</textarea></label>
     <div class="muted small">Duffel token đặt trong file .env (DUFFEL_TOKEN) vì lý do bảo mật.</div>
@@ -706,7 +739,7 @@ const actions = {
     el.closest("[data-pax]").remove();
     $$("[data-pax] .pax-head span", list).forEach((s, i) => (s.textContent = `Hành khách ${i + 1}`));
   },
-  "toggle-return": (el) => { $("#return-box").hidden = !el.checked; },
+  "toggle-return": (el) => { $("#return-box").hidden = el.value !== "rt"; },
   "tg-check": (el) => busy(el, async () => {
     const r = await api("POST", "/api/telegram/check", { botToken: $('[name="botToken"]').value });
     $("#tg-bot").innerHTML = `✅ Bot: <b>@${esc(r.username)}</b> (${esc(r.name)})`;
@@ -732,6 +765,7 @@ const actions = {
     toast(`Đã đặt ngưỡng ${money(h.maxPrice, cfg.currency)} cho ${h.id}`);
     renderChart();
   }),
+  "sv-trip": (el) => { const st = $("#sv-stay"); if (st) st.hidden = el.value !== "rt"; },
   "sv-cancel": () => api("POST", "/api/survey/cancel").then(() => toast("Đã yêu cầu dừng")).catch(() => {}),
 };
 
@@ -742,7 +776,8 @@ const forms = {
       const est = await api("POST", "/api/survey", { ...surveyBody(f), dryRun: true });
       if (!confirm(`Khảo sát dùng ${est.searches} request${CH.meta?.provider === "vna" ? " tới Vietnam Airlines (mỗi request 62 ngày)" : " (lượt tìm)"}. Tiếp tục?`)) return;
       await api("POST", "/api/survey", surveyBody(f));
-      CH.key = CH.meta?.provider === "vna" ? `${f.origin.value.toUpperCase()}-${f.destination.value.toUpperCase()}|ow|economy` : `${f.origin.value.toUpperCase()}-${f.destination.value.toUpperCase()}|${Number(f.stayDays.value) > 0 ? "rt" : "ow"}|${f.cabinClass.value}`;
+      const sb = surveyBody(f);
+      CH.key = CH.meta?.provider === "vna" ? `${sb.origin.toUpperCase()}-${sb.destination.toUpperCase()}|ow|economy` : `${sb.origin.toUpperCase()}-${sb.destination.toUpperCase()}|${sb.stayDays > 0 ? "rt" : "ow"}|${sb.cabinClass}`;
       CH.lastFinished = null;
       pollSurvey();
     } catch (e) { if (e.message !== "401") $("#sv-err").textContent = e.message; }
@@ -804,12 +839,12 @@ const forms = {
 
 document.addEventListener("click", (e) => {
   const el = e.target.closest("[data-action]");
-  if (!el || el.tagName === "INPUT") return;
+  if (!el || el.tagName === "INPUT" || el.tagName === "SELECT") return;
   e.preventDefault();
   actions[el.dataset.action]?.(el, e);
 });
 document.addEventListener("change", (e) => {
-  const el = e.target.closest("input[data-action]");
+  const el = e.target.closest("input[data-action], select[data-action]");
   if (el) actions[el.dataset.action]?.(el, e);
 });
 document.addEventListener("submit", async (e) => {
