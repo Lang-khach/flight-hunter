@@ -10,7 +10,7 @@ interface AdminRecord {
 }
 
 const FILE = path.join(process.env.DATA_DIR ?? "data", "auth.json");
-const SESSION_TTL_MS = Number(process.env.SESSION_TTL_HOURS ?? 12) * 3600_000;
+const SESSION_TTL_MS = Number(process.env.SESSION_TTL_HOURS ?? 72) * 3600_000;
 const MAX_FAILS = 5;
 const LOCK_MS = 15 * 60_000;
 
@@ -41,6 +41,7 @@ export function setAdmin(username: string, password: string) {
   const rec: AdminRecord = { username, salt, hash: scrypt(password, salt), updatedAt: new Date().toISOString() };
   fs.writeFileSync(FILE, JSON.stringify(rec, null, 2), { mode: 0o600 });
   sessions.clear(); // đổi mật khẩu → đăng xuất mọi phiên
+  persistSessions(true);
 }
 
 function verify(username: string, password: string): boolean {
@@ -55,22 +56,51 @@ function verify(username: string, password: string): boolean {
   return ok && userOk;
 }
 
-// ---------- Phiên đăng nhập (lưu RAM; khởi động lại server = đăng nhập lại) ----------
+// ---------- Phiên đăng nhập ----------
+// Lưu xuống ổ dữ liệu để deploy / khởi động lại không bị đăng xuất.
+// Chỉ lưu SHA-256 của token (lộ file cũng không dùng được token).
+const SESSION_FILE = path.join(process.env.DATA_DIR ?? "data", "sessions.json");
+const hashToken = (t: string) => crypto.createHash("sha256").update(t).digest("hex");
 const sessions = new Map<string, { user: string; exp: number }>();
+try {
+  const saved: Record<string, { user: string; exp: number }> = JSON.parse(fs.readFileSync(SESSION_FILE, "utf8"));
+  for (const [k, v] of Object.entries(saved)) if (v.exp > Date.now()) sessions.set(k, v);
+} catch {}
+
+let saveTimer: NodeJS.Timeout | undefined;
+function persistSessions(now = false) {
+  const write = () => {
+    try {
+      fs.mkdirSync(path.dirname(SESSION_FILE), { recursive: true });
+      for (const [k, v] of sessions) if (v.exp < Date.now()) sessions.delete(k);
+      fs.writeFileSync(SESSION_FILE, JSON.stringify(Object.fromEntries(sessions)), { mode: 0o600 });
+    } catch (e) {
+      console.warn("[auth] Không lưu được phiên:", (e as Error).message);
+    }
+  };
+  clearTimeout(saveTimer);
+  if (now) write();
+  else saveTimer = setTimeout(write, 30_000); // gia hạn phiên: gom ghi 30s/lần
+}
 
 export function getSession(token?: string) {
   if (!token) return null;
-  const s = sessions.get(token);
+  const key = hashToken(token);
+  const s = sessions.get(key);
   if (!s) return null;
   if (s.exp < Date.now()) {
-    sessions.delete(token);
+    sessions.delete(key);
+    persistSessions();
     return null;
   }
   s.exp = Date.now() + SESSION_TTL_MS; // gia hạn khi còn hoạt động
+  persistSessions();
   return s;
 }
 
-export const destroySession = (token?: string) => token && sessions.delete(token);
+export function destroySession(token?: string) {
+  if (token && sessions.delete(hashToken(token))) persistSessions(true);
+}
 
 // ---------- Chống dò mật khẩu ----------
 const attempts = new Map<string, { fails: number; until: number }>();
@@ -92,7 +122,8 @@ export function login(ip: string, username: string, password: string): LoginResu
   }
   attempts.delete(ip);
   const token = crypto.randomBytes(32).toString("hex");
-  sessions.set(token, { user: username, exp: Date.now() + SESSION_TTL_MS });
+  sessions.set(hashToken(token), { user: username, exp: Date.now() + SESSION_TTL_MS });
+  persistSessions(true);
   console.log(`[auth] ${username} đăng nhập từ ${ip}`);
   return { ok: true, token, maxAgeSec: SESSION_TTL_MS / 1000 };
 }
