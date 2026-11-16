@@ -2,6 +2,7 @@ import { modeOf, type Config, type Hunt } from "./config.js";
 import { addOrder, addSearch, FREE_RATIO, freeSearchesLeft, getUsage, markGuardNotified } from "./usage.js";
 import type { Notifier } from "./notifier.js";
 import { recordPrice, routeKey } from "./prices.js";
+import { vnaBestPrices, VNA_BOOKING_URL, type DayPrice } from "./providers/vna.js";
 import type { HuntState, Storage } from "./storage.js";
 import type { FlightProvider, Offer, OrderInfo, SearchQuery } from "./types.js";
 
@@ -144,7 +145,90 @@ export class Hunter {
     return true;
   }
 
+  /**
+   * Nguồn Vietnam Airlines (lịch giá): 1 request = 62 ngày giá thấp nhất / 1 người lớn.
+   * Ghép chiều đi + chiều về rẻ nhất, ước tính cả đoàn, báo khi ≤ ngưỡng.
+   */
+  private async runCalendarHunt(hunt: Hunt) {
+    const state = this.store.get(hunt.id);
+    const cur = this.cfg.currency;
+    const today = new Date().toISOString().slice(0, 10);
+    if (hunt.departDates.to < today) {
+      console.log(`[${hunt.id}] Không còn ngày bay hợp lệ (đã qua hết)`);
+      return;
+    }
+    if (hunt.cabinClass !== "economy") console.warn(`[${hunt.id}] Nguồn VNA chỉ có giá hạng Phổ thông – bỏ qua hạng ${hunt.cabinClass}`);
+
+    const conv = (list: DayPrice[]) =>
+      list.map((d) => ({ date: d.date, p: toBaseCurrency(this.cfg, d.total, d.currency) })).filter((d): d is { date: string; p: number } => d.p !== null);
+
+    let out: { date: string; p: number }[];
+    let back: { date: string; p: number }[] = [];
+    try {
+      out = conv(await vnaBestPrices(hunt.origin, hunt.destination, hunt.departDates.from, hunt.departDates.to));
+      if (hunt.returnDates) {
+        back = conv(await vnaBestPrices(hunt.destination, hunt.origin, hunt.returnDates.from, hunt.returnDates.to));
+      }
+    } catch (e) {
+      console.error(`[${hunt.id}] Lỗi lấy giá Vietnam Airlines: ${(e as Error).message}`);
+      return;
+    }
+    // Lịch sử giá (mỗi chiều là một chặng 1 chiều) cho biểu đồ
+    for (const d of out) recordPrice({ k: routeKey(hunt.origin, hunt.destination, false, "economy"), d: d.date, p: d.p, a: "Vietnam Airlines", s: "hunt" });
+    for (const d of back) recordPrice({ k: routeKey(hunt.destination, hunt.origin, false, "economy"), d: d.date, p: d.p, a: "Vietnam Airlines", s: "hunt" });
+
+    // Tìm tổ hợp rẻ nhất (giá / 1 người lớn)
+    type Combo = { d: string; r?: string; perAdult: number };
+    const combos: Combo[] = [];
+    if (!hunt.returnDates) for (const o of out) combos.push({ d: o.date, perAdult: o.p });
+    else for (const o of out) for (const b of back) if (b.date >= o.date) combos.push({ d: o.date, r: b.date, perAdult: o.p + b.p });
+    combos.sort((a, b) => a.perAdult - b.perAdult);
+
+    const adults = hunt.passengers.filter((p) => p.type === "adult").length;
+    const children = hunt.passengers.filter((p) => p.type === "child").length;
+    const infants = hunt.passengers.filter((p) => p.type === "infant").length;
+    const paxFactor = adults + children * this.cfg.vnaChildFactor + infants * this.cfg.vnaInfantFactor;
+    const best = combos[0];
+    const total = best ? Math.round(best.perAdult * paxFactor) : null;
+
+    this.store.addCheck(hunt.id, {
+      at: new Date().toISOString(),
+      departDate: best?.d ?? hunt.departDates.from,
+      returnDate: best?.r,
+      bestPrice: total,
+      airline: "Vietnam Airlines",
+      offers: combos.length,
+    });
+    console.log(
+      `[${hunt.id}] VNA: ${out.length} ngày đi${hunt.returnDates ? `, ${back.length} ngày về` : ""}; rẻ nhất ${best ? `${best.d}${best.r ? " ⇄ " + best.r : ""}: ${fmt(best.perAdult, cur)}/người lớn ≈ ${fmt(total!, cur)} cả đoàn` : "không có giá"}`,
+    );
+    if (!best || total === null) return;
+
+    if (!state.bestEver || total < state.bestEver.price) {
+      state.bestEver = { price: total, at: new Date().toISOString(), airline: "Vietnam Airlines", departDate: best.d, returnDate: best.r };
+    }
+    if (total > hunt.maxPrice) return;
+
+    const last = state.lastNotifiedPrice;
+    if (last !== undefined && total > last * (1 - this.cfg.notify.minDropPercent / 100)) return;
+    state.lastNotifiedPrice = total;
+
+    const under = combos.filter((c) => Math.round(c.perAdult * paxFactor) <= hunt.maxPrice).slice(0, 5);
+    const fmtD = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`;
+    const mode = modeOf(hunt);
+    await this.notifier.send(
+      `🎯 <b>${hunt.id}</b> – Vietnam Airlines ${hunt.origin}→${hunt.destination}${hunt.returnDates ? " (khứ hồi)" : ""}\n` +
+        `💰 <b>${fmt(best.perAdult, cur)}</b>/người lớn ≈ <b>${fmt(total, cur)}</b> cho ${hunt.passengers.length} khách (ngưỡng ${fmt(hunt.maxPrice, cur)})\n` +
+        `📅 Ngày rẻ nhất: ${under.map((c) => `${fmtD(c.d)}${c.r ? "⇄" + fmtD(c.r) : ""} ${fmt(Math.round(c.perAdult * paxFactor), "")}`).join(" · ")}\n` +
+        `👉 Đặt trên web/app VNA: ${VNA_BOOKING_URL}\n` +
+        `💡 Chọn hình thức <b>Trả sau</b> để giữ chỗ miễn phí rồi thanh toán sau (thường trong 8 giờ nếu bay sau 24 giờ).` +
+        (mode !== "notify" ? `\nℹ️ Nguồn VNA không tự giữ chỗ được (trang đặt vé có xác minh chống bot) – vui lòng đặt thủ công.` : "") +
+        (children || infants ? `\nℹ️ Tổng cả đoàn là ước tính (trẻ em ×${this.cfg.vnaChildFactor}, em bé ×${this.cfg.vnaInfantFactor} giá người lớn).` : ""),
+    );
+  }
+
   async runHunt(hunt: Hunt, budget: { left: number }) {
+    if (this.cfg.provider === "vna") return this.runCalendarHunt(hunt);
     const state = this.store.get(hunt.id);
     if (state.booked && (await this.trackOrder(hunt, state))) return;
 

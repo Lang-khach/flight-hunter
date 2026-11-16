@@ -12,7 +12,7 @@ import { getSettings, maskSecret, saveSettings, telegramCreds } from "../setting
 import type { Storage } from "../storage.js";
 import { FREE_RATIO, freeSearchesLeft, getUsage } from "../usage.js";
 import { aggregate, listRoutes } from "../prices.js";
-import { MAX_SURVEY_SEARCHES, survey, surveyDates, type SurveyRequest } from "../survey.js";
+import { MAX_SURVEY_SEARCHES, survey, surveyCost, type SurveyRequest } from "../survey.js";
 
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "public");
 const COOKIE = "fh_session";
@@ -205,11 +205,13 @@ export function startServer(opts: { port: number; host: string; store: Storage; 
       routes: listRoutes(),
       hunts: cfg.hunts.map((h) => ({
         id: h.id,
-        key: `${h.origin}-${h.destination}|${h.returnDates ? "rt" : "ow"}|${h.cabinClass}`,
+        key: cfg.provider === "vna" ? `${h.origin}-${h.destination}|ow|economy` : `${h.origin}-${h.destination}|${h.returnDates ? "rt" : "ow"}|${h.cabinClass}`,
         seats: h.passengers.filter((p) => p.type !== "infant").length,
+        roundTrip: !!h.returnDates,
         maxPrice: h.maxPrice,
       })),
       currency: cfg.currency,
+      provider: cfg.provider,
     });
   });
 
@@ -235,7 +237,7 @@ export function startServer(opts: { port: number; host: string; store: Storage; 
     };
     if (!/^[A-Z]{3}$/.test(r.origin) || !/^[A-Z]{3}$/.test(r.destination)) throw new ActionError("Mã sân bay phải gồm 3 chữ cái (IATA)");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(r.from) || !/^\d{4}-\d{2}-\d{2}$/.test(r.to) || r.from > r.to) throw new ActionError("Khoảng ngày không hợp lệ");
-    if (b.dryRun) return send(res, 200, { searches: surveyDates(r).length, freeLeft: freeSearchesLeft() });
+    if (b.dryRun) return send(res, 200, { searches: surveyCost(loadConfig().provider, r), freeLeft: freeSearchesLeft() });
     try {
       survey.start(r);
     } catch (e) {

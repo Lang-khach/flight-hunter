@@ -25,6 +25,14 @@ Luồng giữ chỗ:
 4. Quá hạn chưa trả: chỗ tự nhả, tool báo và **săn tiếp**
 5. Có hãng chỉ giữ chỗ, không giữ giá: sau mốc `price_guarantee_expires_at` giá có thể đổi, lệnh `pay` sẽ cảnh báo nếu giá khác lúc giữ
 
+## Nguồn Vietnam Airlines (nội địa) – khuyên dùng
+Đặt **Cài đặt → Nguồn dữ liệu = Vietnam Airlines**. Tool lấy *giá thấp nhất mỗi ngày* (1 người lớn, 1 chiều, đã gồm thuế phí), chính là dữ liệu lịch giá trên vietnamairlines.com. Mỗi request lấy được 62 ngày, nên quét rất nhẹ.
+- Khứ hồi: ghép chiều đi + chiều về rẻ nhất; tổng cả đoàn là **ước tính** (trẻ em × `vnaChildFactor`, em bé × `vnaInfantFactor` giá người lớn)
+- Báo Telegram kèm 5 tổ hợp ngày rẻ nhất dưới ngưỡng
+- **Không tự giữ chỗ / đặt vé**: trang đặt vé của VNA có xác minh Cloudflare chống bot, tool không vượt kiểm tra này. Anh vào web/app VNA, chọn **Trả sau** để giữ chỗ miễn phí rồi thanh toán sau
+- Không lọc được giờ bay / điểm dừng (lịch giá không có chi tiết chuyến)
+- Chỉ dùng cá nhân, phi thương mại, quét thưa (điều khoản website VNA cấm bot lấy dữ liệu cho mục đích thương mại)
+
 ## Biểu đồ giá & ngưỡng gợi ý
 Tab **Biểu đồ giá** trên web:
 - **Giá theo ngày bay trong tháng**: cột xanh là ngày có giá ≤ ngưỡng gợi ý, chạm vào cột để xem giá, hãng, giá thấp nhất từng thấy

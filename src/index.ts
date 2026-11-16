@@ -9,6 +9,7 @@ import { Scheduler } from "./scheduler.js";
 import { Storage } from "./storage.js";
 import { flushPrices } from "./prices.js";
 import { startServer } from "./web/server.js";
+import { vnaBestPrices } from "./providers/vna.js";
 
 function showHistory(cfg: Config, store: Storage) {
   for (const h of cfg.hunts) {
@@ -131,6 +132,13 @@ async function main() {
     loadConfig();
   } catch (e) {
     console.error("⚠️ ", (e as Error).message);
+  }
+  if (cmd === "start") {
+    // Kiểm tra 1 lần: server có lấy được lịch giá Vietnam Airlines không (1 request nhỏ)
+    const d = new Date(Date.now() + 30 * 86400_000).toISOString().slice(0, 10);
+    vnaBestPrices("HAN", "SGN", d, d)
+      .then((l) => console.log(`✅ Kết nối Vietnam Airlines OK (HAN→SGN ${d}: ${l[0] ? l[0].total + " " + l[0].currency : "không có giá"})`))
+      .catch((e) => console.warn(`⚠️ Không lấy được giá Vietnam Airlines từ server: ${(e as Error).message}`));
   }
   await scheduler.loop();
 }

@@ -341,7 +341,9 @@ function renderChart() {
         ${tile("Giá phổ biến (trung vị)", st.median * n, `${money(st.median, cur)}/khách`)}
       </div>
       <div class="muted small">Ngưỡng gợi ý = mức mà khoảng 1/4 số ngày bay đang rẻ hơn (tính trên ${st.days} ngày có dữ liệu). Đặt ngưỡng ở đây: đủ thấp để là giá tốt, đủ thực tế để có thể chạm. Thấp nhất từng ghi nhận: ${money(st.lowestEver, cur)}/khách. Giá cho ${n} khách = giá/khách × ${n} (em bé tính riêng, thường rất rẻ).</div>
-      ${hunts.map((h) => `<div class="row small">Chuyến <b class="mono">${esc(h.id)}</b>: ngưỡng hiện tại ${money(h.maxPrice, cur)}
+      ${hunts.map((h) => CH.meta.provider === "vna" && h.roundTrip
+        ? `<div class="row small">Chuyến <b class="mono">${esc(h.id)}</b> là khứ hồi: ngưỡng nên ≈ (ngưỡng gợi ý chiều đi + chiều về) × số khách. Chọn chặng chiều về ở ô trên để xem.</div>`
+        : `<div class="row small">Chuyến <b class="mono">${esc(h.id)}</b>: ngưỡng hiện tại ${money(h.maxPrice, cur)}
         <button class="btn sm" data-action="ch-apply" data-id="${esc(h.id)}" data-value="${st.suggested * h.seats}">Đặt ngưỡng ${money(st.suggested * h.seats, cur)} (${h.seats} khách)</button></div>`).join("")}
     </div>
     <div class="card stack">
@@ -371,11 +373,11 @@ function renderChart() {
 
 function surveyForm() {
   const t = new Date(), d0 = t.toISOString().slice(0, 10);
-  const d1 = new Date(t.getTime() + 90 * 86400000).toISOString().slice(0, 10);
+  const d1 = new Date(t.getTime() + (CH.meta?.provider === "vna" ? 180 : 90) * 86400000).toISOString().slice(0, 10);
   const r = CH.key ? CH.meta.routes.find((x) => x.key === CH.key) : null;
   return `<form class="card stack" data-form="survey">
     <h3 class="u-m0">Khảo sát giá</h3>
-    <div class="muted small">Tìm giá 1 người lớn cho cả dải ngày để vẽ biểu đồ theo ngày và theo tháng. Mỗi ngày = 1 lượt tìm (Duffel miễn phí 1500 lượt/tháng nếu chưa có đơn).</div>
+    <div class="muted small">${CH.meta?.provider === "vna" ? "Lấy giá thấp nhất từng ngày của Vietnam Airlines (1 người lớn, 1 chiều, đã gồm thuế phí) – mỗi request 62 ngày, nên khảo sát cả năm chỉ vài request. Khứ hồi = khảo sát cả 2 chiều." : "Tìm giá 1 người lớn cho cả dải ngày để vẽ biểu đồ theo ngày và theo tháng. Mỗi ngày = 1 lượt tìm (Duffel miễn phí 1500 lượt/tháng nếu chưa có đơn)."}</div>
     <div class="grid2">
       <label>Điểm đi<input name="origin" maxlength="3" value="${esc(r?.origin || "")}" placeholder="HAN" required /></label>
       <label>Điểm đến<input name="destination" maxlength="3" value="${esc(r?.destination || "")}" placeholder="SGN" required /></label>
@@ -496,6 +498,7 @@ function openHuntEditor(idx) {
       <label>Đến giờ<input name="timeTo" type="time" value="${esc(h.departTimeWindow?.to)}" /></label>
       <label>Ngưỡng giá – tổng cả đoàn (${esc(S.cfg.currency)})<input name="maxPrice" type="number" min="1" step="any" value="${h.maxPrice || ""}" required /></label>
     </div>
+    ${S.cfg.provider === "vna" ? `<div class="card u-inset small">Nguồn <b>Vietnam Airlines</b>: tool canh giá thấp nhất mỗi ngày và báo Telegram. Không lọc được giờ bay/điểm dừng, không tự giữ chỗ (trang đặt vé VNA có xác minh chống bot) – anh đặt trên web/app VNA, chọn <b>Trả sau</b> để giữ chỗ miễn phí.</div>` : ""}
     <label>Khi giá ≤ ngưỡng${sel("bookingMode", [["notify", "Chỉ báo Telegram"], ["hold", "Tự giữ chỗ, báo tôi vào thanh toán"], ["instant", "Tự đặt + thanh toán luôn (cần ALLOW_AUTOBOOK)"]], mode)}</label>
     <div class="row"><h3 class="u-m0">Hành khách</h3><span class="muted small">Số vé = số hành khách. Tên viết như CCCD/hộ chiếu.</span></div>
     <div id="pax-list" class="stack">${h.passengers.map(paxBlock).join("")}</div>
@@ -581,7 +584,7 @@ async function viewSettings() {
   <form class="card stack" data-form="general">
     <h2>Cài đặt chung</h2>
     <div class="grid2">
-      <label>Nguồn dữ liệu<select name="provider"><option value="mock" ${c.provider === "mock" ? "selected" : ""}>Mock (chạy thử)</option><option value="duffel" ${c.provider === "duffel" ? "selected" : ""}>Duffel (thật)</option></select></label>
+      <label>Nguồn dữ liệu<select name="provider"><option value="mock" ${c.provider === "mock" ? "selected" : ""}>Mock (chạy thử)</option><option value="duffel" ${c.provider === "duffel" ? "selected" : ""}>Duffel (quốc tế)</option><option value="vna" ${c.provider === "vna" ? "selected" : ""}>Vietnam Airlines (nội địa, canh giá)</option></select></label>
       <label>Tiền tệ so sánh<input name="currency" value="${esc(c.currency)}" maxlength="3" /></label>
       <label>Chu kỳ quét (phút)<input name="checkIntervalMinutes" type="number" min="1" value="${c.checkIntervalMinutes}" /></label>
       <label>Số lượt tìm tối đa mỗi vòng<input name="maxSearchesPerRun" type="number" min="1" value="${c.maxSearchesPerRun}" /></label>
@@ -694,9 +697,9 @@ const forms = {
     $("#sv-err").textContent = "";
     try {
       const est = await api("POST", "/api/survey", { ...surveyBody(f), dryRun: true });
-      if (!confirm(`Khảo sát dùng ${est.searches} lượt tìm. Tiếp tục?`)) return;
+      if (!confirm(`Khảo sát dùng ${est.searches} request${CH.meta?.provider === "vna" ? " tới Vietnam Airlines (mỗi request 62 ngày)" : " (lượt tìm)"}. Tiếp tục?`)) return;
       await api("POST", "/api/survey", surveyBody(f));
-      CH.key = `${f.origin.value.toUpperCase()}-${f.destination.value.toUpperCase()}|${Number(f.stayDays.value) > 0 ? "rt" : "ow"}|${f.cabinClass.value}`;
+      CH.key = CH.meta?.provider === "vna" ? `${f.origin.value.toUpperCase()}-${f.destination.value.toUpperCase()}|ow|economy` : `${f.origin.value.toUpperCase()}-${f.destination.value.toUpperCase()}|${Number(f.stayDays.value) > 0 ? "rt" : "ow"}|${f.cabinClass.value}`;
       CH.lastFinished = null;
       pollSurvey();
     } catch (e) { if (e.message !== "401") $("#sv-err").textContent = e.message; }

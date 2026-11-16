@@ -3,6 +3,14 @@ import { toBaseCurrency } from "./hunter.js";
 import { recordPrice, routeKey } from "./prices.js";
 import { makeProvider } from "./providers/index.js";
 import { addSearch, freeSearchesLeft } from "./usage.js";
+import { vnaBestPrices, VNA_MAX_RANGE } from "./providers/vna.js";
+
+/** Số request ước tính cho 1 khảo sát */
+export function surveyCost(provider: string, r: SurveyRequest): number {
+  if (provider !== "vna") return surveyDates(r).length;
+  const days = Math.max(0, Math.round((Date.parse(r.to) - Math.max(Date.parse(r.from), Date.parse(new Date().toISOString().slice(0, 10)))) / 86400_000) + 1);
+  return Math.ceil(days / VNA_MAX_RANGE) * (r.stayDays > 0 ? 2 : 1);
+}
 
 export interface SurveyRequest {
   origin: string;
@@ -41,6 +49,16 @@ class SurveyRunner {
 
   start(r: SurveyRequest) {
     if (this.state.running) throw new Error("Đang có khảo sát chạy");
+    const cfg0 = loadConfig();
+    if (cfg0.provider === "vna") {
+      const cost = surveyCost("vna", r);
+      if (!cost) throw new Error("Không có ngày nào hợp lệ (đã qua)");
+      if (Date.parse(r.to) - Date.parse(r.from) > 366 * 86400_000) throw new Error("Khảo sát VNA tối đa 1 năm mỗi lần");
+      this.cancelled = false;
+      this.state = { running: true, route: `${r.origin} → ${r.destination}`, done: 0, total: cost };
+      void this.runVna(r);
+      return;
+    }
     const dates = surveyDates(r);
     if (!dates.length) throw new Error("Không có ngày nào hợp lệ (đã qua)");
     if (dates.length > MAX_SURVEY_SEARCHES) throw new Error(`Tối đa ${MAX_SURVEY_SEARCHES} lượt tìm mỗi lần khảo sát (đang là ${dates.length}). Tăng "cách ngày" hoặc thu hẹp khoảng.`);
@@ -55,6 +73,33 @@ class SurveyRunner {
 
   cancel() {
     this.cancelled = true;
+  }
+
+  /** Vietnam Airlines: lấy lịch giá cả khoảng (mỗi request 62 ngày), lưu theo từng chiều */
+  private async runVna(r: SurveyRequest) {
+    const cfg = loadConfig();
+    console.log(`[survey] Khảo sát Vietnam Airlines ${r.origin}→${r.destination} ${r.from}..${r.to}`);
+    try {
+      const dirs: [string, string][] = [[r.origin, r.destination]];
+      if (r.stayDays > 0) dirs.push([r.destination, r.origin]);
+      for (const [o, d] of dirs) {
+        if (this.cancelled) break;
+        const list = await vnaBestPrices(o, d, r.from, r.to);
+        for (const x of list) {
+          const p = toBaseCurrency(cfg, x.total, x.currency);
+          if (p !== null) recordPrice({ k: routeKey(o, d, false, "economy"), d: x.date, p, a: "Vietnam Airlines", s: "survey" });
+        }
+        this.state.done += Math.ceil(this.state.total / dirs.length);
+        console.log(`[survey] ${o}→${d}: ${list.length} ngày có giá`);
+      }
+    } catch (e) {
+      this.state.error = (e as Error).message;
+      console.error(`[survey] Lỗi: ${this.state.error}`);
+    } finally {
+      this.state.done = Math.min(this.state.done, this.state.total);
+      this.state.running = false;
+      this.state.finishedAt = new Date().toISOString();
+    }
   }
 
   private async run(r: SurveyRequest, dates: string[]) {

@@ -52,7 +52,10 @@ export const HuntSchema = z
   });
 
 export const ConfigSchema = z.object({
-  provider: z.enum(["mock", "duffel"]).default("mock"),
+  provider: z.enum(["mock", "duffel", "vna"]).default("mock"),
+  /** Ước tính giá cả đoàn từ giá 1 người lớn của VNA (nguồn vna chỉ có giá người lớn) */
+  vnaChildFactor: z.number().min(0).max(1.5).default(1),
+  vnaInfantFactor: z.number().min(0).max(1).default(0.15),
   currency: z.string().length(3).default("VND"),
   checkIntervalMinutes: z.number().min(1).default(30),
   maxSearchesPerRun: z.number().int().min(1).default(6),
