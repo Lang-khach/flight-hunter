@@ -21,7 +21,19 @@ export interface DayPrice {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function callOnce(origin: string, destination: string, start: string, range: number): Promise<DayPrice[]> {
-  const res = await fetch(ENDPOINT, {
+  let res: Response;
+  try {
+    res = await doFetch(origin, destination, start, range);
+  } catch (e: any) {
+    const c = e?.cause;
+    throw new Error(`VNA không kết nối được: ${c?.code ?? ""} ${c?.message ?? e.message}`.trim());
+  }
+  return handle(res);
+}
+
+function doFetch(origin: string, destination: string, start: string, range: number) {
+  return fetch(ENDPOINT, {
+    signal: AbortSignal.timeout(20_000),
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -37,6 +49,9 @@ async function callOnce(origin: string, destination: string, start: string, rang
       location: "VN",
     }),
   });
+}
+
+async function handle(res: Response): Promise<DayPrice[]> {
   const text = await res.text();
   if (!res.ok) {
     const err: any = new Error(`VNA HTTP ${res.status}: ${text.slice(0, 200)}`);
