@@ -1,0 +1,93 @@
+# ==========================================================
+#  CẤU HÌNH SĂN VÉ – copy thành config.yaml rồi sửa
+# ==========================================================
+
+provider: mock            # mock (chạy thử) | duffel (dữ liệu thật)
+currency: VND             # tiền tệ dùng để so sánh với maxPrice
+checkIntervalMinutes: 120 # bao lâu quét lại 1 lần (Duffel: nên 2–3 giờ để không vượt hạn mức tìm miễn phí)
+maxSearchesPerRun: 6      # số lượt tìm mỗi vòng, chia đều cho các chuyến; ngày chưa quét sẽ xoay vòng sang vòng sau
+freeSearchGuard: true     # Duffel: tự dừng khi chạm 1500 lượt tìm / 1 đơn / tháng (vượt sẽ tốn $0.005/lượt)
+
+# Tỷ giá quy đổi khi hãng trả giá bằng ngoại tệ (1 đơn vị ngoại tệ = ? VND)
+fxRates:
+  USD: 26300
+  EUR: 30500
+  GBP: 34800
+
+notify:
+  telegram: true          # cần TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID trong .env
+  minDropPercent: 2       # chỉ báo lại khi giá giảm thêm >= 2% so với lần báo trước
+  holdReminderHours: [12, 3, 1]   # nhắc thanh toán khi còn 12h / 3h / 1h trước hạn giữ chỗ
+
+hunts:
+  # ---------- Ví dụ 1: khứ hồi Tết, cả nhà 2 lớn 1 trẻ em 1 em bé ----------
+  - id: han-sgn-tet
+    enabled: true
+    origin: HAN
+    destination: SGN
+    departDates: { from: 2027-02-01, to: 2027-02-04 }   # quét mọi ngày trong khoảng
+    returnDates: { from: 2027-02-10, to: 2027-02-12 }   # bỏ dòng này nếu bay 1 chiều
+    cabinClass: economy        # economy | premium_economy | business | first
+    maxStops: 0                # 0 = chỉ bay thẳng
+    airlines: [VN, VJ, QH]     # lọc mã hãng IATA (bỏ trống = mọi hãng)
+    departTimeWindow: { from: "06:00", to: "21:00" }    # giờ cất cánh chiều đi
+    maxPrice: 12000000         # TỔNG tiền cho tất cả hành khách
+    # Hành động khi giá <= maxPrice:
+    #   notify  = chỉ báo
+    #   hold    = TỰ GIỮ CHỖ (chưa trả tiền) + báo anh vào thanh toán trước hạn
+    #   instant = tự đặt + trả tiền luôn (cần ALLOW_AUTOBOOK=true trong .env)
+    bookingMode: hold
+    # Số lượng vé = số hành khách khai báo bên dưới
+    passengers:
+      - type: adult
+        title: mr              # mr | ms | mrs | miss | dr
+        gender: m              # m | f
+        givenName: VAN AN      # Tên + tên đệm, KHÔNG dấu, viết như trên CCCD/hộ chiếu
+        familyName: NGUYEN
+        bornOn: 1990-05-20
+        email: an.nguyen@example.com
+        phone: "+84901234567"
+      - type: adult
+        title: mrs
+        gender: f
+        givenName: THI BINH
+        familyName: TRAN
+        bornOn: 1992-08-15
+        email: binh.tran@example.com
+        phone: "+84907654321"
+      - type: child            # 2–11 tuổi
+        title: miss
+        gender: f
+        givenName: MINH CHAU
+        familyName: NGUYEN
+        bornOn: 2019-03-10
+        email: an.nguyen@example.com
+        phone: "+84901234567"
+      - type: infant           # dưới 2 tuổi, ngồi lòng người lớn
+        title: mr
+        gender: m
+        givenName: GIA BAO
+        familyName: NGUYEN
+        bornOn: 2026-01-05
+        email: an.nguyen@example.com
+        phone: "+84901234567"
+
+  # ---------- Ví dụ 2: 1 chiều, 1 người, săn vé rẻ và tự đặt ----------
+  - id: sgn-dad-solo
+    enabled: true
+    origin: SGN
+    destination: DAD
+    departDates: { from: 2026-12-20, to: 2026-12-27 }
+    cabinClass: economy
+    maxStops: 0
+    maxPrice: 900000
+    bookingMode: instant
+    passengers:
+      - type: adult
+        title: mr
+        gender: m
+        givenName: VAN AN
+        familyName: NGUYEN
+        bornOn: 1990-05-20
+        email: an.nguyen@example.com
+        phone: "+84901234567"

@@ -1,0 +1,28 @@
+{
+  "name": "flight-hunter",
+  "version": "1.0.0",
+  "description": "Tool săn vé máy bay giá rẻ tự động (theo dõi giá, cảnh báo, tự đặt vé)",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts start",
+    "hunt": "tsx src/index.ts run",
+    "once": "tsx src/index.ts once",
+    "history": "tsx src/index.ts history",
+    "pay": "tsx src/index.ts pay",
+    "set-password": "tsx src/index.ts set-password",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "yaml": "^2.5.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
