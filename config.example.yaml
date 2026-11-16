@@ -2,10 +2,10 @@
 #  CẤU HÌNH SĂN VÉ – copy thành config.yaml rồi sửa
 # ==========================================================
 
-provider: mock            # mock (chạy thử) | duffel (dữ liệu thật)
+provider: vna             # vna (Vietnam Airlines, nội địa – khuyên dùng) | duffel (quốc tế) | mock (chạy thử)
 currency: VND             # tiền tệ dùng để so sánh với maxPrice
-checkIntervalMinutes: 120 # bao lâu quét lại 1 lần (Duffel: nên 2–3 giờ để không vượt hạn mức tìm miễn phí)
-maxSearchesPerRun: 6      # số lượt tìm mỗi vòng, chia đều cho các chuyến; ngày chưa quét sẽ xoay vòng sang vòng sau
+checkIntervalMinutes: 60  # khuyên dùng: VNA 60 phút; Duffel 120 phút
+maxSearchesPerRun: 3      # (Duffel/giả lập) số ngày bay xem mỗi lần kiểm tra; khuyên dùng 3 (≈1.080 lượt/tháng với nhịp 2 giờ)
 freeSearchGuard: true     # Duffel: tự dừng khi chạm 1500 lượt tìm / 1 đơn / tháng (vượt sẽ tốn $0.005/lượt)
 
 # Tỷ giá quy đổi khi hãng trả giá bằng ngoại tệ (1 đơn vị ngoại tệ = ? VND)

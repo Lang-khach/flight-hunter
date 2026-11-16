@@ -53,13 +53,13 @@ export const HuntSchema = z
   });
 
 export const ConfigSchema = z.object({
-  provider: z.enum(["mock", "duffel", "vna"]).default("mock"),
+  provider: z.enum(["mock", "duffel", "vna"]).default("vna"),
   /** Ước tính giá cả đoàn từ giá 1 người lớn của VNA (nguồn vna chỉ có giá người lớn) */
   vnaChildFactor: z.number().min(0).max(1.5).default(1),
   vnaInfantFactor: z.number().min(0).max(1).default(0.15),
   currency: z.string().length(3).default("VND"),
-  checkIntervalMinutes: z.number().min(1).default(30),
-  maxSearchesPerRun: z.number().int().min(1).default(6),
+  checkIntervalMinutes: z.number().min(1).default(60),
+  maxSearchesPerRun: z.number().int().min(1).default(3),
   /** Duffel: dừng quét khi chạm hạn mức miễn phí 1500 lượt tìm / 1 đơn trong tháng */
   freeSearchGuard: z.boolean().default(true),
   fxRates: z.record(z.number().positive()).default({}),
@@ -95,11 +95,28 @@ export type Passenger = z.infer<typeof PassengerSchema>;
 const CONFIG_PATH = process.env.CONFIG_PATH ?? "config.yaml";
 
 /** Lần chạy đầu trên server (volume trống): tạo config mặc định chưa có chuyến nào */
+/** Cấu hình khuyên dùng theo nguồn */
+export const RECOMMENDED = {
+  vna: { checkIntervalMinutes: 60, maxSearchesPerRun: 3 }, // 1–2 yêu cầu/chuyến mỗi giờ
+  duffel: { checkIntervalMinutes: 120, maxSearchesPerRun: 3, freeSearchGuard: true }, // ≈1.080 lượt/tháng < 1.500 miễn phí
+  mock: { checkIntervalMinutes: 60, maxSearchesPerRun: 3 },
+} as const;
+
 export function ensureConfigFile() {
-  if (fs.existsSync(CONFIG_PATH)) return;
+  if (fs.existsSync(CONFIG_PATH)) {
+    // Bản cài cũ còn để "giả lập" mặc định và chưa có chuyến nào → chuyển sang cấu hình khuyên dùng (Vietnam Airlines)
+    try {
+      const cur = loadConfig();
+      if (cur.provider === "mock" && cur.hunts.length === 0) {
+        saveConfig({ ...cur, provider: "vna", ...RECOMMENDED.vna });
+        console.log("📝 Đã chuyển cấu hình mặc định sang nguồn Vietnam Airlines, kiểm tra mỗi 1 giờ");
+      }
+    } catch {}
+    return;
+  }
   fs.mkdirSync(path.dirname(path.resolve(CONFIG_PATH)), { recursive: true });
-  saveConfig({ provider: "mock", currency: "VND", checkIntervalMinutes: 120, maxSearchesPerRun: 6, fxRates: { USD: 26300, EUR: 30500 }, hunts: [] });
-  console.log(`📝 Đã tạo ${CONFIG_PATH} mặc định – thêm chuyến bay trên giao diện web`);
+  saveConfig({ provider: "vna", currency: "VND", ...RECOMMENDED.vna, fxRates: { USD: 26300, EUR: 30500 }, hunts: [] });
+  console.log(`📝 Đã tạo ${CONFIG_PATH} mặc định (Vietnam Airlines, kiểm tra mỗi 1 giờ) – thêm chuyến bay trên giao diện web`);
 }
 
 /** Validate + ghi config.yaml (giữ bản sao config.yaml.bak) */

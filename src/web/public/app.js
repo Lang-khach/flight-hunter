@@ -468,7 +468,10 @@ async function resolveAirport(el) {
   } else el.value = v.toUpperCase();
   showAirportLabel(el, list);
 }
-document.addEventListener("input", (e) => { if (e.target.matches?.("[data-airport]")) onAirportInput(e.target); });
+document.addEventListener("input", (e) => {
+  if (e.target.matches?.("[data-airport]")) onAirportInput(e.target);
+  if (e.target.matches?.('[data-action="gen-change"]')) genRefresh();
+});
 document.addEventListener("focusout", (e) => { if (e.target.matches?.("[data-airport]")) resolveAirport(e.target); });
 document.addEventListener("focusin", (e) => { if (e.target.matches?.("[data-airport]")) onAirportInput(e.target); });
 
@@ -659,16 +662,35 @@ async function viewSettings() {
   v.innerHTML = `
   <form class="card stack" data-form="general">
     <h2>Cài đặt chung</h2>
-    <div class="grid2">
-      <label>Nguồn dữ liệu<select name="provider"><option value="mock" ${c.provider === "mock" ? "selected" : ""}>Mock (chạy thử)</option><option value="duffel" ${c.provider === "duffel" ? "selected" : ""}>Duffel (quốc tế)</option><option value="vna" ${c.provider === "vna" ? "selected" : ""}>Vietnam Airlines (nội địa, canh giá)</option></select></label>
-      <label>Tiền tệ so sánh<input name="currency" value="${esc(c.currency)}" maxlength="3" /></label>
-      <label>Chu kỳ quét (phút)<input name="checkIntervalMinutes" type="number" min="1" value="${c.checkIntervalMinutes}" /></label>
-      <label>Số lượt tìm tối đa mỗi vòng<input name="maxSearchesPerRun" type="number" min="1" value="${c.maxSearchesPerRun}" /></label>
+    <label>Nguồn giá vé<select name="provider" data-action="gen-change">
+      <option value="vna" ${c.provider === "vna" ? "selected" : ""}>Vietnam Airlines – nội địa (khuyên dùng)</option>
+      <option value="duffel" ${c.provider === "duffel" ? "selected" : ""}>Duffel – chặng quốc tế</option>
+      <option value="mock" ${c.provider === "mock" ? "selected" : ""}>Dữ liệu giả lập – chỉ để chạy thử</option>
+    </select></label>
+
+    <label>Bao lâu kiểm tra giá một lần?<select name="checkIntervalMinutes" data-action="gen-change">
+      ${[[15, "15 phút"], [30, "30 phút"], [60, "1 giờ"], [120, "2 giờ"], [180, "3 giờ"], [360, "6 giờ"], [720, "12 giờ"], [1440, "1 ngày"]]
+        .concat([[15, 30, 60, 120, 180, 360, 720, 1440].includes(c.checkIntervalMinutes) ? [] : [[c.checkIntervalMinutes, c.checkIntervalMinutes + " phút"]]])
+        .map(([v, l]) => `<option value="${v}" ${v === c.checkIntervalMinutes ? "selected" : ""}>${l}</option>`).join("")}
+    </select></label>
+    <div class="muted small">Tool tự kiểm tra giá tất cả chuyến đang bật theo nhịp này (lệch ngẫu nhiên ±10% cho tự nhiên). Kiểm tra dày thì bắt được giá rẻ sớm hơn, nhưng gửi nhiều yêu cầu hơn.</div>
+
+    <div data-only="offer" class="stack">
+      <label>Mỗi lần kiểm tra, xem tối đa bao nhiêu ngày bay?<input name="maxSearchesPerRun" type="number" min="1" max="50" value="${c.maxSearchesPerRun}" data-action="gen-change" /></label>
+      <div class="muted small">Nguồn này phải hỏi giá <b>từng ngày bay</b> (từng cặp ngày đi–về nếu khứ hồi), mỗi lần hỏi = 1 lượt tìm. Ví dụ chuyến có 4 ngày đi × 3 ngày về = 12 cặp, đặt 6 thì mỗi lần kiểm tra xem 6 cặp, lần sau xem 6 cặp còn lại. Số này được chia đều cho các chuyến đang bật.</div>
+      <label class="check"><input type="checkbox" name="freeSearchGuard" ${c.freeSearchGuard ? "checked" : ""} /> Tự dừng khi hết lượt tìm miễn phí của Duffel trong tháng</label>
+      <div class="muted small">Duffel miễn phí 1.500 lượt tìm/tháng nếu chưa mua vé nào (mỗi vé mua thêm 1.500 lượt); vượt thì tính $0,005/lượt.</div>
+      <div class="grid2">
+        <label>Tiền tệ so sánh ngưỡng giá<input name="currency" value="${esc(c.currency)}" maxlength="3" /></label>
+      </div>
+      <label>Tỷ giá quy đổi (mỗi dòng: MÃ=số VND, vd USD=26300)<textarea name="fxRates" rows="3" class="mono">${esc(Object.entries(c.fxRates).map(([k, v]) => `${k}=${v}`).join("\n"))}</textarea></label>
+      <div class="muted small">Dùng khi hãng báo giá bằng ngoại tệ. Duffel token đặt trong biến môi trường DUFFEL_TOKEN.</div>
     </div>
-    <label class="check"><input type="checkbox" name="freeSearchGuard" ${c.freeSearchGuard ? "checked" : ""} /> Giới hạn lượt tìm trong mức miễn phí của Duffel (1500 lượt / 1 đơn / tháng) – chỉ áp dụng nguồn Duffel</label>
-    <div class="muted small">Vượt mức Duffel tính $0.005/lượt. Ví dụ 6 lượt × 12 vòng/ngày ≈ 2.160 lượt/tháng. Nên đặt chu kỳ 2–3 giờ và khoảng ngày hẹp.</div>
-    <label>Tỷ giá (mỗi dòng: MÃ=giá trị)<textarea name="fxRates" rows="4" class="mono">${esc(Object.entries(c.fxRates).map(([k, v]) => `${k}=${v}`).join("\n"))}</textarea></label>
-    <div class="muted small">Duffel token đặt trong file .env (DUFFEL_TOKEN) vì lý do bảo mật.</div>
+
+    <div data-only="vna" class="muted small">Nguồn Vietnam Airlines lấy cả lịch giá (62 ngày) trong 1 yêu cầu, nên không cần chọn số ngày bay; giá luôn bằng VND.</div>
+
+    <div class="row"><span class="small" id="gen-rec"></span><button type="button" class="btn sm" data-action="gen-recommend">Dùng mức khuyên dùng</button></div>
+    <div class="card u-inset small" id="gen-est"></div>
     <div class="err" id="gen-err"></div>
     <div><button class="btn primary" type="submit">Lưu</button></div>
   </form>
@@ -680,6 +702,38 @@ async function viewSettings() {
     <div class="err" id="pw-err"></div>
     <div><button class="btn primary" type="submit">Đổi mật khẩu</button></div>
   </form>`;
+  genRefresh();
+}
+
+
+/** Hiện/ẩn trường theo nguồn và ước tính số yêu cầu */
+const RECOMMENDED = { vna: { interval: 60, max: 3, text: "Khuyên dùng cho Vietnam Airlines: kiểm tra mỗi 1 giờ." }, duffel: { interval: 120, max: 3, text: "Khuyên dùng cho Duffel: mỗi 2 giờ, xem 3 ngày bay/lần (≈1.080 lượt/tháng, trong mức miễn phí)." }, mock: { interval: 60, max: 3, text: "Giả lập: mỗi 1 giờ, 3 ngày bay/lần." } };
+
+function genRefresh() {
+  const f = $('form[data-form="general"]');
+  if (!f) return;
+  const prov = f.provider.value;
+  $("#gen-rec").textContent = RECOMMENDED[prov].text;
+  $$("[data-only]", f).forEach((el) => (el.hidden = el.dataset.only === "vna" ? prov !== "vna" : prov === "vna"));
+  const interval = Number(f.checkIntervalMinutes.value) || 60;
+  const perDay = Math.round((1440 / interval) * 10) / 10;
+  const hunts = (S.cfg?.hunts || []).filter((h) => h.enabled);
+  const days = (a, b) => Math.max(1, Math.round((Date.parse(b) - Date.parse(a)) / 86400000) + 1);
+  let msg;
+  if (!hunts.length) msg = `≈ <b>${perDay}</b> lần kiểm tra/ngày. Chưa có chuyến nào đang bật.`;
+  else if (prov === "vna") {
+    const req = hunts.reduce((n, h) => n + Math.ceil(days(h.departDates.from, h.departDates.to) / 62) + (h.returnDates ? Math.ceil(days(h.returnDates.from, h.returnDates.to) / 62) : 0), 0);
+    msg = `${hunts.length} chuyến đang bật · mỗi lần kiểm tra gửi <b>${req}</b> yêu cầu tới Vietnam Airlines · ≈ <b>${perDay}</b> lần/ngày → khoảng <b>${Math.round(req * perDay)}</b> yêu cầu/ngày.` +
+      (interval < 30 ? ` <span class="err">Nên để từ 30 phút trở lên để quét thưa, đúng tinh thần dùng cá nhân.</span>` : "");
+  } else {
+    const combos = hunts.reduce((n, h) => n + days(h.departDates.from, h.departDates.to) * (h.returnDates ? days(h.returnDates.from, h.returnDates.to) : 1), 0);
+    const perRound = Math.min(Number(f.maxSearchesPerRun.value) || 1, combos);
+    const month = Math.round(perRound * perDay * 30);
+    const fullCycle = Math.ceil(combos / perRound);
+    msg = `${hunts.length} chuyến đang bật, tổng <b>${combos}</b> ngày/cặp ngày cần xem · mỗi lần xem <b>${perRound}</b> → xem hết 1 lượt sau <b>${fullCycle}</b> lần kiểm tra (~${Math.round(fullCycle * interval / 60 * 10) / 10} giờ) · ≈ <b>${month.toLocaleString("vi-VN")}</b> lượt tìm/tháng` +
+      (prov === "duffel" ? (month > 1500 ? ` <span class="err">(vượt 1.500 lượt miễn phí – nên giãn nhịp kiểm tra hoặc giảm số ngày)</span>` : " (trong mức miễn phí)") : "");
+  }
+  $("#gen-est").innerHTML = msg;
 }
 
 // ================= Nhật ký =================
@@ -765,6 +819,16 @@ const actions = {
     toast(`Đã đặt ngưỡng ${money(h.maxPrice, cfg.currency)} cho ${h.id}`);
     renderChart();
   }),
+  "gen-change": () => genRefresh(),
+  "gen-recommend": () => {
+    const f = $('form[data-form="general"]');
+    const r = RECOMMENDED[f.provider.value];
+    f.checkIntervalMinutes.value = String(r.interval);
+    f.maxSearchesPerRun.value = String(r.max);
+    if (f.provider.value === "duffel") f.freeSearchGuard.checked = true;
+    genRefresh();
+    toast("Đã điền mức khuyên dùng – bấm Lưu để áp dụng");
+  },
   "sv-trip": (el) => { const st = $("#sv-stay"); if (st) st.hidden = el.value !== "rt"; },
   "sv-cancel": () => api("POST", "/api/survey/cancel").then(() => toast("Đã yêu cầu dừng")).catch(() => {}),
 };
